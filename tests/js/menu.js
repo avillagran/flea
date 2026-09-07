@@ -85,8 +85,15 @@ function runMenu(check) {
     check("an empty listing still offers New folder and the hidden toggle",
           labels(Menu.listingEntries({ showHidden: false, hasRow: false, rowInDropbox: false,
                                        dropboxPath: "", taildropPeers: [], archiveFormats: [],
-                                       rowIsArchive: false, rowIsImage: false, canConvert: false })),
+                                       rowIsArchive: false, rowIsImage: false, canConvert: false,
+                                       canAutoRefresh: true })),
           "New folder|Show hidden files")
+    check("a listing with no auto-watch adds a manual Refrescar row",
+          labels(Menu.listingEntries({ showHidden: false, hasRow: false, rowInDropbox: false,
+                                       dropboxPath: "", taildropPeers: [], archiveFormats: [],
+                                       rowIsArchive: false, rowIsImage: false, canConvert: false,
+                                       canAutoRefresh: false })),
+          "Refrescar|New folder|Show hidden files")
 
     // ui/Header.qml's own rows, on a right click over the column titles. Four toggles, flipping
     // labels, each answering "col:<key>"; Name is absent because it never hides.

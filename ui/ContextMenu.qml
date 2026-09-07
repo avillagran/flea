@@ -31,6 +31,8 @@ Item {
     property bool rowInDropbox: false
     // False on a listing's empty space, where only the two rows that need no row make sense.
     property bool hasRow: true
+    // True when this pane can be watched by filesystem events and auto-refresh will keep it live.
+    property bool canAutoRefresh: true
 
     // The rail's own rows when ui/Sidebar.qml raised this menu, empty when the listing did. One
     // instance serves both: a second one in this tree takes the keyboard from the list, see AGENTS.md.
@@ -96,7 +98,8 @@ Item {
             archiveFormats: root.archiveFormats,
             rowIsArchive: root.rowIsArchive,
             rowIsImage: root.rowIsImage,
-            canConvert: root.canConvert
+            canConvert: root.canConvert,
+            canAutoRefresh: root.canAutoRefresh
         })
     }
 
