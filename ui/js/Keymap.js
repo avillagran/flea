@@ -14,6 +14,7 @@ function lookup(key, text, modifiers) {
             if (key === Qt.Key_Period) return "toggleHidden"
         }
         if (key === Qt.Key_D) return "pageDown"
+        if (key === Qt.Key_R) return "refresh"
         if (key === Qt.Key_U) return "pageUp"
         if (key === Qt.Key_A) return "selectAll"
         if (key === Qt.Key_C) return "copy"
@@ -105,6 +106,7 @@ var SHEET = [
     { keys: "x ^x", action: "cut", label: "cut" },
     { keys: "p ^v", action: "paste", label: "paste" },
     { keys: "r", action: "rename", label: "rename" },
+    { keys: "^r", action: "refresh", label: "refresh" },
     { keys: "dd", action: "trashArm", label: "trash" },
     { keys: "z ^z", action: "undo", label: "undo" },
     { keys: "^N", action: "newFolder", label: "new folder" },

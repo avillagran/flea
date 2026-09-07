@@ -6,6 +6,10 @@ key = "D"
 action = "pageDown"
 
 [[ctrl]]
+key = "R"
+action = "refresh"
+
+[[ctrl]]
 key = "U"
 action = "pageUp"
 
@@ -402,6 +406,11 @@ label = "paste"
 keys = "r"
 action = "rename"
 label = "rename"
+
+[[sheet]]
+keys = "^r"
+action = "refresh"
+label = "refresh"
 
 [[sheet]]
 keys = "dd"

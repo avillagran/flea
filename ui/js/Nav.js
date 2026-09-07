@@ -44,6 +44,10 @@ function openWithoutHistory(pane, newPath) {
     pane.dirSizeState = DirSizes.empty()
     pane.cursorIndex = 0
     pane.trashArmedAt = 0
+    // A reset for watch-driven refresh after navigation; it is re-enabled once the new path
+    // can be watched at all.
+    pane._autoRefreshQueued = false
+    pane.canAutoRefresh = false
     // The row the editor sat on belongs to the listing being replaced, so the rename goes with it:
     // leaving the index set opened an empty editor over whatever file arrived at that row instead.
     pane.renamingIndex = -1

@@ -239,6 +239,10 @@ function handleKey(event, root, sidebar) {
         root.keymapSheet.open(root)
         return true
     }
+    if (action === "refresh") {
+        root.refresh()
+        return true
+    }
     // Tabs are window-level, so t, w and the digits answer from the rail as well as the list.
     if (action.indexOf("tab") === 0) {
         root.act(action)

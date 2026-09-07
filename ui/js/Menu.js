@@ -61,6 +61,10 @@ function listingEntries(p) {
         out.push({ label: "Move to Trash", action: "trash", glyph: "trash", danger: true })
         out.push({ separator: true })
     }
+    // If this listing cannot be watched automatically, offer a manual refresh row.
+    if (p.canAutoRefresh === false) {
+        out.push({ label: "Refrescar", action: "refresh" })
+    }
     // The last group is the rows that need no row under the cursor, which is also the whole menu
     // on a listing's empty space.
     out.push({ label: "New folder", action: "newFolder", glyph: "folder-plus" })

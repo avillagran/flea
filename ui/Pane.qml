@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import "." as Flea
 import "js/DirSizes.js" as DirSizes
 import "js/Filter.js" as Filter
@@ -132,9 +133,38 @@ FocusScope {
     readonly property bool canGoBack: root.history.length > 0
     readonly property bool canGoUp: root.path.length > 1
 
+    onPathChanged: {
+        // FileView reports loadFailed for directories because it reads file contents; that is
+        // expected here. The same object still watches the directory and emits fileChanged.
+        root.canAutoRefresh = root.path.length > 0
+        root._autoRefreshQueued = false
+    }
+
+    onListInFlightChanged: {
+        if (!root.listInFlight && root._autoRefreshQueued) {
+            root._autoRefreshQueued = false
+            root.requestAutoRefresh()
+        }
+    }
+
     // The filesystem line the status bar draws, refreshed once per directory rather than per row.
     property string fsName: ""
     property real fsFree: 0
+    // A live directory watch can refresh the listing when files appear, rename or remove.
+    // If the watch cannot attach, the menu offers "Refrescar" as a manual fallback.
+    property bool canAutoRefresh: false
+    property bool _autoRefreshQueued: false
+
+    // A tiny settle avoids a storm from bursty inotify events, especially on big renames.
+    function requestAutoRefresh() {
+        if (!root.canAutoRefresh || root.path.length === 0)
+            return
+        if (root.listInFlight) {
+            root._autoRefreshQueued = true
+            return
+        }
+        autoRefreshTimer.restart()
+    }
 
     function goBack() { Nav.back(root) }
 
@@ -348,6 +378,7 @@ FocusScope {
         canConvert: root.backend.canConvert
         rowIsArchive: root.cursorRow !== null && !root.cursorRow.d && Archive.isArchive(root.cursorRow.n)
         rowIsImage: root.cursorRow !== null && root.cursorRow.i === "image-x-generic"
+        canAutoRefresh: root.canAutoRefresh
         dropboxPath: sidebar.dropboxReady ? root.home + "/Dropbox" : ""
         // The separator is part of the test, or /home/gm/DropboxBackup would count as inside Dropbox.
         rowInDropbox: root.path === root.home + "/Dropbox" || root.path.indexOf(root.home + "/Dropbox/") === 0
@@ -357,6 +388,33 @@ FocusScope {
             if (action === "copypath") { wire.opener.copyText(root.path + "/" + root.cursorRow.n); return }
             if (action.indexOf("col:") === 0) { ViewState.toggleColumn(action.substring("col:".length)); return }
             root.act(action)
+        }
+    }
+
+    // Auto-refresh from filesystem watch events when the listing directory supports watching.
+    Timer {
+        id: autoRefreshTimer
+        interval: 250
+        repeat: false
+        onTriggered: {
+            if (!root.canAutoRefresh || root.listInFlight || root.path.length === 0)
+                return
+            root.refresh("")
+        }
+    }
+
+    FileView {
+        id: listingWatcher
+        path: root.path
+        watchChanges: true
+        printErrors: false
+        // Directory contents are not readable as FileView text, but fileChanged still watches
+        // the directory path; loadFailed is therefore expected and deliberately ignored.
+        onFileChanged: {
+            // A changed directory may fire before the first rows arrive; queue it so the visible listing
+            // lands after a settle instead of re-requesting while an older read is still in flight.
+            if (root.path.length > 0)
+                root.requestAutoRefresh()
         }
     }
 
