@@ -134,10 +134,14 @@ FocusScope {
     readonly property bool canGoUp: root.path.length > 1
 
     onPathChanged: {
-        // FileView reports loadFailed for directories because it reads file contents; that is
-        // expected here. The same object still watches the directory and emits fileChanged.
-        root.canAutoRefresh = root.path.length > 0
+        // Reconfigure the persistent directory watcher before the next path can produce events.
+        root.canAutoRefresh = false
         root._autoRefreshQueued = false
+        directoryWatcher.running = false
+        Qt.callLater(function () {
+            if (root.path.length > 0)
+                directoryWatcher.running = true
+        })
     }
 
     onListInFlightChanged: {
@@ -157,7 +161,7 @@ FocusScope {
 
     // A tiny settle avoids a storm from bursty inotify events, especially on big renames.
     function requestAutoRefresh() {
-        if (!root.canAutoRefresh || root.path.length === 0)
+        if (root.path.length === 0)
             return
         if (root.listInFlight) {
             root._autoRefreshQueued = true
@@ -391,7 +395,8 @@ FocusScope {
         }
     }
 
-    // Auto-refresh from filesystem watch events when the listing directory supports watching.
+    // Auto-refresh from persistent directory events. FileView watches the path as a file, so it
+    // cannot observe a new child in a directory; inotifywait owns the directory watch instead.
     Timer {
         id: autoRefreshTimer
         interval: 250
@@ -403,18 +408,23 @@ FocusScope {
         }
     }
 
-    FileView {
-        id: listingWatcher
-        path: root.path
-        watchChanges: true
-        printErrors: false
-        // Directory contents are not readable as FileView text, but fileChanged still watches
-        // the directory path; loadFailed is therefore expected and deliberately ignored.
-        onFileChanged: {
-            // A changed directory may fire before the first rows arrive; queue it so the visible listing
-            // lands after a settle instead of re-requesting while an older read is still in flight.
-            if (root.path.length > 0)
-                root.requestAutoRefresh()
+    Process {
+        id: directoryWatcher
+        command: ["stdbuf", "-o0", "inotifywait", "--monitor", "--quiet", "--format", "%e",
+                  "--event", "create,delete,moved_to,moved_from,close_write,attrib", root.path]
+        stdout: SplitParser {
+            splitMarker: "\n"
+            onRead: function (data) {
+                if (root.path.length > 0)
+                    root.refresh("")
+            }
+        }
+        onStarted: root.canAutoRefresh = true
+        onExited: {
+            // A stop during path reconfiguration can report after the replacement watcher started;
+            // only a still-stopped process means automatic refresh is actually unavailable.
+            if (!directoryWatcher.running)
+                root.canAutoRefresh = false
         }
     }
 
