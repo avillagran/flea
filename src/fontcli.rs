@@ -21,19 +21,14 @@ pub fn dispatch(args: &[String]) -> Option<i32> {
     }
 }
 
-fn read_font(path: &Path) -> Result<(Vec<u8>, &'static str), String> {
+fn read_font(path: &Path) -> Result<Vec<u8>, String> {
     let file = OpenOptions::new().read(true).custom_flags(O_NONBLOCK).open(path).map_err(|e| e.to_string())?;
     let meta = file.metadata().map_err(|e| e.to_string())?;
-    if !meta.is_file() || meta.len() > MAX_BYTES { return Err("Choose a TTF or OTF file smaller than 64 MiB.".into()); }
+    if !meta.is_file() || meta.len() > MAX_BYTES { return Err("Choose a font file no larger than 64 MiB.".into()); }
     let mut bytes = Vec::new();
     file.take(MAX_BYTES + 1).read_to_end(&mut bytes).map_err(|e| e.to_string())?;
     if bytes.len() as u64 > MAX_BYTES { return Err("The font exceeds 64 MiB.".into()); }
-    let ext = match bytes.get(..4) {
-        Some(b"\0\x01\0\0") | Some(b"true") => "ttf",
-        Some(b"OTTO") => "otf",
-        _ => return Err("This is not a supported TTF or OTF font.".into()),
-    };
-    Ok((bytes, ext))
+    Ok(bytes)
 }
 
 fn user_fonts() -> Result<PathBuf, String> {
@@ -58,7 +53,7 @@ fn same_file(path: &Path, bytes: &[u8]) -> Result<bool, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(e) => Err(e.to_string()),
         Ok(m) if !m.is_file() || m.len() != bytes.len() as u64 => Err("A different file occupies the font's install location.".into()),
-        Ok(_) => if read_font(path)?.0 == bytes { Ok(true) }
+        Ok(_) => if read_font(path)? == bytes { Ok(true) }
             else { Err("A different file occupies the font's install location.".into()) },
     }
 }
@@ -84,18 +79,6 @@ fn snapshot(dir: &Path, bytes: &[u8]) -> Result<Temp, String> {
     Err("Could not prepare the font file.".into())
 }
 
-fn scan(path: &Path) -> Result<(String, String), String> {
-    let output = Command::new("timeout").args(["10", "fc-scan", "--format", "%{family[0]}\n%{style[0]}\n", "--"])
-        .arg(path).stdin(Stdio::null()).stderr(Stdio::null()).output()
-        .map_err(|_| "Font inspection needs fontconfig (fc-scan) and coreutils (timeout).")?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut lines = text.lines();
-    let family = lines.next().unwrap_or("");
-    let style = lines.next().unwrap_or("");
-    if !output.status.success() || family.is_empty() { return Err("The font could not be read.".into()); }
-    Ok((family.to_string(), style.to_string()))
-}
-
 fn refresh(dir: &Path) -> bool {
     Command::new("timeout").args(["20", "fc-cache", "--force", "--"]).arg(dir)
         .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().map(|s| s.success()).unwrap_or(false)
@@ -104,14 +87,15 @@ fn refresh(dir: &Path) -> bool {
 fn manage(verb: &str, path: &Path) -> Result<String, String> {
     let source_is_link = fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false);
     let path = path.canonicalize().map_err(|e| e.to_string())?;
-    let (bytes, ext) = read_font(&path)?;
+    let bytes = read_font(&path)?;
     let root = user_fonts()?;
     let dir = root.join("flea");
-    let target = dir.join(format!("{}.{}", md5::hex(&bytes), ext));
+
     // Inspection leaves the font installation untouched, including its directory and cache.
     let scratch = std::env::temp_dir();
     let temp = snapshot(if verb == "install" { &dir } else { &scratch }, &bytes)?;
-    let (family, style) = scan(&temp.0)?;
+    let font = crate::fontscan::inspect(&temp.0, &bytes)?;
+    let target = dir.join(format!("{}.{}", md5::hex(&bytes), font.extension));
     let managed = same_file(&target, &bytes)?;
     let source_installed = !source_is_link && user_source(&path, &root);
     let source_is_target = target.canonicalize().ok().as_ref() == Some(&path);
@@ -119,14 +103,30 @@ fn manage(verb: &str, path: &Path) -> Result<String, String> {
     let mut cache_ok = true;
     match verb {
         "install" if !installed => {
-            match fs::hard_link(&temp.0, &target) {
-                Ok(()) => {},
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => { same_file(&target, &bytes)?; },
+            let created = match fs::hard_link(&temp.0, &target) {
+                Ok(()) => true,
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if !same_file(&target, &bytes)? { return Err("The font installation changed; try again.".into()); }
+                    false
+                },
                 Err(e) => return Err(e.to_string()),
-            }
+            };
             drop(temp);
             installed = true;
             cache_ok = refresh(&root);
+            if !crate::fontscan::discoverable(&target) {
+                if created {
+                    fs::remove_file(&target).map_err(|e| e.to_string())?;
+                    refresh(&root);
+                    return Err("Linux did not make this font available to desktop applications. The installation was rolled back; your original file is unchanged.".into());
+                }
+                return Err("Linux does not expose this existing font to desktop applications; the existing file was left unchanged.".into());
+            }
+        }
+        "install" => {
+            if !crate::fontscan::discoverable(if source_installed { &path } else { &target }) {
+                return Err("Linux does not expose this existing font to desktop applications; the existing file was left unchanged.".into());
+            }
         }
         "uninstall" => {
             // Never remove the download. When browsing an installed user font, that file is the explicit subject.
@@ -141,7 +141,9 @@ fn manage(verb: &str, path: &Path) -> Result<String, String> {
         }
         _ => {},
     }
-    Ok(format!("{{\"family\":\"{}\",\"style\":\"{}\",\"installed\":{},\"cacheOk\":{},\"sourceRemoved\":{},\"location\":\"{}\"}}",
-        escape(&family), escape(&style), installed, cache_ok, verb == "uninstall" && source_installed,
-        escape(&if source_installed { path } else { target }.to_string_lossy())))
+    let desktop_available = installed && crate::fontscan::discoverable(if source_installed { &path } else { &target });
+    Ok(format!("{{\"family\":\"{}\",\"style\":\"{}\",\"installed\":{},\"cacheOk\":{},\"sourceRemoved\":{},\"location\":\"{}\",\"desktopAvailable\":{},\"format\":\"{}\",\"faces\":{},\"axes\":{}}}",
+        escape(&font.faces[0].family), escape(&font.faces[0].style), installed, cache_ok, verb == "uninstall" && source_installed,
+        escape(&if source_installed { path } else { target }.to_string_lossy()),
+        desktop_available, escape(&font.format), font.faces_json(), font.axes.trim()))
 }

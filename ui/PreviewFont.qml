@@ -12,9 +12,16 @@ FocusScope {
     property string path: ""
     property var pane: null
     property bool compact: false
+    property int faceIndex: 0
+    property var variationAxes: ({})
+    readonly property var faces: actions.info ? actions.info.faces : []
+    readonly property var face: root.faces.length > root.faceIndex ? root.faces[root.faceIndex] : null
+    readonly property var axes: root.face && actions.info.axes ? actions.info.axes[String(root.face.index)] || [] : []
+    function chooseFace(index) { root.faceIndex = Math.max(0, Math.min(root.faces.length - 1, index)); root.variationAxes = ({}) }
+    function setAxis(tag, value) { var next = Object.assign({}, root.variationAxes); next[tag] = value; root.variationAxes = next }
     property real sampleSize: root.compact ? 26 : 36
     readonly property string status: actions.error ? "This font could not be read."
-        : loadedFont.status === FontLoader.Error ? "This font could not be rendered."
+        : loadedFont.status === FontLoader.Error ? "Preview unavailable in Qt; Linux installation can still be checked."
         : actions.info && loadedFont.status === FontLoader.Ready ? "font" : "loading"
     readonly property var fontInfo: actions.info
     readonly property var actionItem: install
@@ -30,7 +37,7 @@ FocusScope {
     function focusFirst() { (install.available ? install : closeButton).forceActiveFocus() }
     function changeSize(delta) { root.sampleSize = Math.max(8, Math.min(120, root.sampleSize + delta)) }
     function manageFont() { actions.run(actions.info && actions.info.installed ? "uninstall" : "install") }
-    onPathChanged: { custom.text = lorem; flick.contentY = 0 }
+    onPathChanged: { custom.text = lorem; flick.contentY = 0; root.faceIndex = 0; root.variationAxes = ({}) }
     readonly property string lorem: "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."
 
     Flea.FontActions {
@@ -50,7 +57,7 @@ FocusScope {
         spacing: Theme.spacing.gap
         Text {
             width: parent.width
-            text: actions.info ? actions.info.family + " · " + actions.info.style : root.path.split("/").pop()
+            text: actions.info ? (root.face ? root.face.family + " · " + root.face.style : actions.info.family) : root.path.split("/").pop()
             color: Theme.color.foreground
             font.family: Theme.font.family
             font.pixelSize: Theme.font.body
@@ -84,8 +91,8 @@ FocusScope {
         }
         Text {
             width: parent.width
-            text: actions.error || actions.notice || (loadedFont.status === FontLoader.Error ? "This font could not be rendered."
-                : actions.info ? (actions.info.installed ? "Installed for your user" : "Preview only · TTF / OTF") : "Reading font…")
+            text: actions.error || actions.notice || (loadedFont.status === FontLoader.Error ? "Preview unavailable in Qt; Linux installation can still be checked."
+                : actions.info ? (actions.info.installed ? (actions.info.desktopAvailable ? "Installed for your user" : "In your font directory; unavailable to desktop applications") : "Preview only · " + actions.info.format) : "Reading font…")
             wrapMode: Text.WordWrap
             color: actions.error || loadedFont.status === FontLoader.Error ? Theme.color.error : Theme.color.muted
             font.family: Theme.font.family
@@ -94,9 +101,23 @@ FocusScope {
         }
     }
 
+    Flea.FontOptions {
+        id: options
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: heading.bottom
+        anchors.margins: Theme.spacing.gap
+        faces: root.faces
+        faceIndex: root.faceIndex
+        axes: root.axes
+        values: root.variationAxes
+        onFaceSelected: function(index) { root.chooseFace(index) }
+        onAxisChanged: function(tag, value) { root.setAxis(tag, value) }
+        onResetRequested: root.variationAxes = ({})
+    }
     Flickable {
         id: flick
-        anchors.top: heading.bottom
+        anchors.top: options.bottom
         anchors.bottom: parent.bottom
         anchors.left: parent.left
         anchors.right: parent.right
@@ -112,6 +133,25 @@ FocusScope {
             id: samples
             width: flick.width - Theme.spacing.gap
             spacing: Theme.spacing.gap * 2
+            Text {
+                width: parent.width
+                text: "FONT GLYPHS · missing characters in other samples may use system fallback"
+                color: Theme.color.muted
+                font.family: Theme.font.family
+                font.pixelSize: Theme.font.caption
+                wrapMode: Text.WordWrap
+            }
+            Text {
+                width: parent.width
+                text: root.face ? root.face.sample : ""
+                color: Theme.color.foreground
+                font.family: root.face ? root.face.family : loadedFont.name
+                font.styleName: root.face ? root.face.style : ""
+                font.variableAxes: root.variationAxes
+                font.pixelSize: root.sampleSize
+                wrapMode: Text.WrapAnywhere
+                textFormat: Text.PlainText
+            }
             Repeater {
                 model: ["ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz", "0123456789", "! @ # $ % ^ & * ( ) _ + − = { } [ ] : ; ‘ ’ “ ” < > ? / \\ | ~ € £ ¥ © ® ™", "ÁÉÍÓÚÜÑ áéíóúüñ ¿¡"]
                 delegate: Text {
@@ -120,8 +160,9 @@ FocusScope {
                     text: modelData
                     wrapMode: Text.WrapAnywhere
                     color: Theme.color.foreground
-                    font.family: loadedFont.name
-                    font.styleName: actions.info ? actions.info.style : ""
+                    font.family: root.face ? root.face.family : loadedFont.name
+                    font.styleName: root.face ? root.face.style : ""
+                    font.variableAxes: root.variationAxes
                     font.pixelSize: root.sampleSize
                     textFormat: Text.PlainText
                 }
@@ -153,8 +194,9 @@ FocusScope {
                     color: Theme.color.foreground
                     selectionColor: Theme.color.accent
                     selectedTextColor: Theme.color.background
-                    font.family: loadedFont.name
-                    font.styleName: actions.info ? actions.info.style : ""
+                    font.family: root.face ? root.face.family : loadedFont.name
+                    font.styleName: root.face ? root.face.style : ""
+                    font.variableAxes: root.variationAxes
                     font.pixelSize: root.sampleSize
                     textFormat: TextEdit.PlainText
                     activeFocusOnTab: true

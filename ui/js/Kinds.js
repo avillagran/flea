@@ -53,7 +53,7 @@ function isMarkdown(name) {
     return false
 }
 
-function isFont(name) { return /\.(ttf|otf)$/i.test(String(name)) }
+function isFont(name) { return /\.(ttf|otf|ttc|otc|woff2?|eot|pfa|pfb|t1|t42|cid|cff|pfr|fon|fnt|bdf|pcf|otb|dfont|suit|suitcase|afm|pfm)(\.(gz|bz2|Z))?$/i.test(String(name)) }
 
 function isPdf(name) {
     var lower = String(name).toLowerCase()
@@ -77,6 +77,7 @@ function kindState(icon) {
     case "application-xml": return CODE
     case "package-x-generic": return ARCHIVE
     }
+    if (name === "font-x-generic") return FONT
     if (name.indexOf("image-") === 0) return IMAGE
     if (name.indexOf("video-") === 0) return VIDEO
     if (name.indexOf("audio-") === 0) return AUDIO

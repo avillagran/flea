@@ -9353,28 +9353,39 @@ The rail lit-place test presses the rail through its `PointHandler` instead of s
 
 ## Font previews and user installation
 
-`ui/PreviewFont.qml` is loaded only for the selected TTF/OTF, through Quick Look or the
-column preview. Enter uses the same Quick Look route as Space. Its `FontLoader` and
-`FontActions.qml` helper are absent on other file kinds; no directory scan loads fonts.
-The sample editor consumes text keys, including Space, and Escape closes Quick Look.
+`ui/PreviewFont.qml` is loaded only for the selected font through Quick Look or the column
+preview. Enter uses the same Quick Look route as Space. Its `FontLoader`, `FontOptions.qml`
+and `FontActions.qml` helper are absent on other file kinds; no listing loads fonts. The
+sample editor consumes text keys, including Space, and Escape closes Quick Look. The glyph
+sample comes from each face's actual charset, so symbol fonts show their own characters.
 
-`flea --font info|install|uninstall <path>` (`src/fontcli.rs`) runs outside the backend
-listing loop. It accepts regular SFNT TTF/OTF files up to 64 MiB, validates a private
-snapshot through `fc-scan`, installs that same snapshot atomically without replacing a
-file, and refreshes Fontconfig through `fc-cache`. Both tools have deadlines via coreutils
-`timeout`. Installation uses `$XDG_DATA_HOME/fonts/flea` (default `~/.local/share/fonts/flea`).
-Content-derived names distinguish styles and versions; every existing candidate is compared
-byte for byte, so the digest alone never authorizes replacement or removal. Uninstall removes
-that matching installed copy, preserving the downloaded source. A file browsed directly
-inside the user's font roots (`$XDG_DATA_HOME/fonts` or `~/.fonts`) can itself be uninstalled;
-system files and source symlinks cannot. Fonts installed elsewhere are outside this manager.
+`flea --font info|install|uninstall <path>` (`src/fontcli.rs`) runs outside the backend listing
+loop. It accepts regular font files up to 64 MiB, validates a private snapshot through
+`fontscan.rs` and `fc-scan`, and installs that same snapshot atomically without replacing a
+file. FreeType/Fontconfig-readable TrueType/OpenType collections, WOFF/WOFF2, Type 1/42,
+CFF/CID, PFR, Windows FON/FNT, BDF/PCF and resource-font containers are accepted, including
+compressed bitmap inputs. Extensions route the viewer but never authorize installation.
+AFM/PFM metrics and unsupported EOT/Office inputs are refused, with no installed copy.
 
-`tests/fonts.sh` covers real Fontconfig installation, repeat installation, renamed sources,
-uninstallation, intact downloads, invalid files, FIFOs, planted symlinks and occupied targets
-under isolated user roots. Its offscreen Quick Look leg drives Enter's navigation route,
-the real install/uninstall buttons, sample size, text input, close and reopen.
-The feature's existing-file ceilings, re-derived with `wc -l`, are `ui/Pane.qml` 1234,
-`ui/Preview.qml` 880 and `ui/PreviewColumn.qml` 605. New components remain below the soft budget.
+Installation uses `$XDG_DATA_HOME/fonts/flea` (default `~/.local/share/fonts/flea`). Every
+existing content-derived target is compared byte for byte. A new installation must appear
+in `fc-list` after `fc-cache`; otherwise only the copy created by that attempt is removed,
+and the cache refreshed again. An existing user file is never removed by this failed-install
+rollback. Availability means Fontconfig exposes the file, not that every application supports
+legacy formats. Uninstall preserves downloaded sources; a file browsed directly in the user's
+font roots (`$XDG_DATA_HOME/fonts` or `~/.fonts`) can itself be uninstalled. System files and
+source symlinks cannot be removed. Fonts installed elsewhere are outside this manager.
 
-The startup unit inventory is unchanged; `tests/startup-units.txt` records 1673459 bytes,
-the sum of the existing units after the font classifier and the Enter route were added.
+Collections install as one original file, with a face selector for preview. Variable fonts
+retain their variation data byte for byte. The specimen's `font.variableAxes` uses the limits
+reported by FreeType's MM API via embedded `src/fontaxes.py`, run through isolated Python only
+for a selected variable font. No converter or third-party Python package is needed. Each
+foreign tool has a deadline; `FontActions` allows their combined inspection and rollback budget.
+
+`tests/fonts.sh` drives real Fontconfig discovery, removal, invalid inputs, FIFOs, occupied
+targets, symlinks and rejected-install rollback under isolated user roots. Its offscreen legs
+use the actual pane/backend, install buttons, text editor, collection selector and variable-axis
+bindings. `font-formats.py` generates WOFF and BDF and exercises other real formats present on
+the host. Existing ceilings remain `ui/Pane.qml` 1234, `ui/Preview.qml` 880 and
+`ui/PreviewColumn.qml` 605; new components remain below the soft budget. The startup unit
+inventory is unchanged; `tests/startup-units.txt` records their current 1673644-byte total.

@@ -54,7 +54,8 @@ Item {
     }
     Timer {
         id: deadline
-        interval: 35000
+        // Scan, variable-axis inspection, cache refresh, discovery and a rollback each have their own deadline.
+        interval: 95000
         onTriggered: {
             child.running = false
             root.reply = JSON.stringify({ error: "The font operation timed out. Reopen the preview to check its state." })

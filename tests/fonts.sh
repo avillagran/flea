@@ -10,6 +10,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch"/{config,home,data,cache,state,runtime}
 chmod 700 "$scratch/runtime"
+python3 tests/font-formats.py "$scratch"
 ln -s "$PWD/ui" "$scratch/config/flea"
 ln -s "$PWD/ui/boot/Commons" "$scratch/config/Commons"
 ln -s "$PWD/ui/boot/Ui" "$scratch/config/Ui"
@@ -43,3 +44,16 @@ case $status in 0|143) ;; *) cat "$scratch/pane.log"; exit 1;; esac
 cat "$scratch/pane.log"
 grep -q 'FONT DONE checks=.* failed=0' "$scratch/pane.log"
 if grep -E 'FONT FAIL|TypeError|ReferenceError|Binding loop|Unable to assign|Cannot load font|Failed to load|is not a type' "$scratch/pane.log"; then exit 1; fi
+
+# Every real container above also reaches the actual Qt loader, collection selector and variable-axis binding.
+cp tests/font-formats.qml "$scratch/config/shell.qml"
+status=0
+env -u WAYLAND_DISPLAY -u DISPLAY HOME="$scratch/home" XDG_DATA_HOME="$scratch/data" \
+    XDG_CACHE_HOME="$scratch/cache" XDG_STATE_HOME="$scratch/state" XDG_RUNTIME_DIR="$scratch/runtime" \
+    FONT_CASES="$(cat "$scratch/format-cases.json")" FLEA_BIN="$PWD/target/debug/flea" \
+    QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic QT_QUICK_BACKEND=software \
+    timeout 70 qs -p "$scratch/config" > "$scratch/formats.log" 2>&1 || status=$?
+case $status in 0|143) ;; *) cat "$scratch/formats.log"; exit 1;; esac
+cat "$scratch/formats.log"
+grep -q 'FONT DONE checks=.* failed=0' "$scratch/formats.log"
+if grep -E 'FONT FAIL|TypeError|ReferenceError|Binding loop|Unable to assign|Cannot load font|Failed to load|is not a type' "$scratch/formats.log"; then exit 1; fi
