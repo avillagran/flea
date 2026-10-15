@@ -133,6 +133,11 @@ FocusScope {
             id: samples
             width: flick.width - Theme.spacing.gap
             spacing: Theme.spacing.gap * 2
+            Flea.FontDefaults {
+                path: root.path
+                face: root.face
+                installed: actions.info !== null && actions.info.desktopAvailable && !actions.info.sourceRemoved
+            }
             Text {
                 width: parent.width
                 text: "FONT GLYPHS · missing characters in other samples may use system fallback"
