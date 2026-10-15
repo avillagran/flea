@@ -4,8 +4,6 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import shutil
-import sys
 import tempfile
 import tomllib
 import xml.etree.ElementTree as ET
@@ -73,6 +71,29 @@ with tempfile.TemporaryDirectory(prefix='flea-defaults-') as scratch:
     for name, path in paths.items():
         assert path.read_text() == originals[name], name
     assert not (root / 'config/gtk-4.0/settings.ini').exists()
+    # Independently validate native TOML edits with Python's full TOML parser.
+    alacritty = paths['alacritty/alacritty.toml']
+    cases = [
+        "font={size=17,normal={family='Old',style='Light'}}\n[window]\nopacity=0.8\n",
+        "[font.normal]\nfamily='Old'\nstyle='Light'\n[font.offset]\nx=2\ny=3\n",
+        "font.normal.family='Old'\nfont.size=17\n",
+        "['font'.\"normal\"]\n'family'='Old'\n",
+        "[window]\ntitle=\"\"\"[font]\nnormal={family='Decoy'}\"\"\"\n[font]\nsize=17\n",
+    ]
+    for text in cases:
+        alacritty.write_text(text)
+        expected = tomllib.loads(text)
+        for style in ('normal', 'bold', 'italic', 'bold_italic'):
+            expected.setdefault('font', {}).setdefault(style, {})['family'] = family
+        run('apply', str(fixture), '0', 'alacritty')
+        assert tomllib.loads(alacritty.read_text()) == expected
+        run('restore', 'alacritty')
+        assert alacritty.read_text() == text
+    for text in ("font=3\n", "[font]\n[font]\n", "[font]\nnormal={family='A',family='B'}\n"):
+        alacritty.write_text(text)
+        run('apply', str(fixture), '0', 'alacritty', ok=False)
+        assert alacritty.read_text() == text
+    alacritty.write_text(originals['alacritty/alacritty.toml'])
     # Refuse external edits, and preserve the original backup on repeated applies.
     run('apply', str(fixture), '0', 'kitty')
     kitty = paths['kitty/kitty.conf']
@@ -101,29 +122,6 @@ with tempfile.TemporaryDirectory(prefix='flea-defaults-') as scratch:
     assert kitty.is_symlink() and family in real.read_text()
     run('restore', 'kitty')
     assert kitty.is_symlink() and real.read_text() == originals['kitty/kitty.conf']
-    # Exercise escaping with real terminal parsers when installed, without starting a terminal.
-    special = 'Flea "Demo" & <Sans> \\ Regular'
-    helper = str(Path('src/fontdefaults.py').resolve())
-    for target in ('desktop', 'alacritty', 'kitty', 'ghostty', 'foot'):
-        out = subprocess.run([sys.executable, '-I', helper, 'apply', target, special], env=env, text=True, capture_output=True)
-        assert out.returncode == 0, out.stderr
-        if target == 'desktop':
-            ET.fromstring((root / 'config/fontconfig/conf.d/99-flea-sans-serif.conf').read_text())
-        elif target == 'alacritty':
-            assert tomllib.loads(paths['alacritty/alacritty.toml'].read_text())['font']['normal']['family'] == special
-        elif target == 'kitty' and shutil.which('kitty'):
-            code = 'from kitty.config import load_config; import sys; bad=[]; o=load_config(sys.argv[1], accumulate_bad_lines=bad); assert not bad, bad; print(o.font_family)'
-            native = subprocess.run(['kitty', '+runpy', code, str(kitty)], env=env, text=True, capture_output=True)
-            assert native.returncode == 0, native.stderr
-        elif target == 'ghostty' and shutil.which('ghostty'):
-            native = subprocess.run(['ghostty', '+show-config'], env=env, text=True, capture_output=True)
-            assert native.returncode == 0 and 'error' not in native.stderr.lower(), native.stderr
-            assert 'SymbolFallback' in native.stdout
-        elif target == 'foot' and shutil.which('foot'):
-            native = subprocess.run(['foot', '--check-config', '--config=' + str(paths['foot/foot.ini'])], env=env, text=True, capture_output=True)
-            assert native.returncode == 0, native.stderr
-        out = subprocess.run([sys.executable, '-I', helper, 'restore', target, ''], env=env, text=True, capture_output=True)
-        assert out.returncode == 0, out.stderr
     # A failing desktop settings service must roll back all file changes too.
     stub_dir = root / 'bin'
     stub_dir.mkdir()
@@ -135,4 +133,19 @@ with tempfile.TemporaryDirectory(prefix='flea-defaults-') as scratch:
     assert paths['gtk-3.0/settings.ini'].read_text() == originals['gtk-3.0/settings.ini']
     assert not (root / 'config/fontconfig/conf.d/99-flea-sans-serif.conf').exists()
     assert not (root / 'state/flea/font-defaults/desktop.json').exists()
+    # The test harness may use Python; the shipped font feature must not invoke it.
+    blocked = stub_dir / 'python3'
+    marker = root / 'runtime-python-invoked'
+    import shlex
+    blocked.write_text('#!/bin/sh\nprintf attempted > ' + shlex.quote(str(marker)) + '\nexit 89\n')
+    blocked.chmod(0o700)
+    run('info', str(fixture))
+    run('install', str(fixture))
+    run('apply', str(fixture), '0', 'monospace')
+    run('restore', 'monospace')
+    variable = subprocess.check_output(['fc-list', ':variable=true', '-f', '%{file}\n'], env=env, text=True).splitlines()
+    if variable:
+        assert run('info', variable[0])['axes'], 'Native FreeType variable-axis inspection returned no axes'
+    run('uninstall', str(fixture))
+    assert not marker.exists(), 'Font runtime attempted to invoke Python'
 print('PASS font defaults: seven destinations, real fontconfig resolution, sizes, restore, conflicts, symlinks and installed-face validation')

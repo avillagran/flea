@@ -1,4 +1,6 @@
 // Fontconfig validates every container; the file extension is never proof that a font is usable.
+#[path = "fontaxes.rs"]
+pub mod axes;
 use crate::json::escape;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -38,9 +40,10 @@ pub fn inspect(path: &Path, bytes: &[u8]) -> Result<Font, String> {
     let extension = extension(bytes, &format).ok_or("Linux read the font, but its container is not supported for installation.")?;
     let variables: Vec<_> = faces.iter().filter(|f| f.variable).map(|f| f.index.to_string()).collect();
     let axes = if variables.is_empty() { "{}".into() } else {
-        let result = Command::new("timeout").args(["10", "python3", "-I", "-c", include_str!("fontaxes.py")])
-            .arg(path).args(variables).stdin(Stdio::null()).stderr(Stdio::null()).output()
-            .map_err(|_| "Variable font inspection needs Python and FreeType.")?;
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let result = Command::new("timeout").arg("10").arg(executable).args(["--font", "axes"])
+            .arg(path).arg(variables.join(",")).stdin(Stdio::null()).stderr(Stdio::null()).output()
+            .map_err(|_| "Variable font inspection needs FreeType and coreutils (timeout).")?;
         if !result.status.success() { return Err("The variable font axes could not be read.".into()); }
         String::from_utf8(result.stdout).map_err(|_| "The variable font axes are invalid.")?
     };

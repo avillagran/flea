@@ -12,7 +12,12 @@ const O_NONBLOCK: i32 = 0x800;
 
 pub fn dispatch(args: &[String]) -> Option<i32> {
     if args.get(1).map(String::as_str) != Some("--font") { return None; }
-    let result = if args.get(2).map(String::as_str) == Some("defaults") && args.len() == 3 {
+    let result = if args.get(2).map(String::as_str) == Some("axes") && args.len() == 5 {
+        read_font(Path::new(&args[3])).and_then(|bytes| {
+            let temp = snapshot(&std::env::temp_dir(), &bytes)?;
+            crate::fontscan::axes::inspect(&temp.0, &args[4])
+        })
+    } else if args.get(2).map(String::as_str) == Some("defaults") && args.len() == 3 {
         crate::fontdefaults::run("status", "", "")
     } else if args.get(2).map(String::as_str) == Some("restore") && args.len() == 4 {
         crate::fontdefaults::run("restore", &args[3], "")

@@ -9378,8 +9378,8 @@ source symlinks cannot be removed. Fonts installed elsewhere are outside this ma
 
 Collections install as one original file, with a face selector for preview. Variable fonts
 retain their variation data byte for byte. The specimen's `font.variableAxes` uses the limits
-reported by FreeType's MM API via embedded `src/fontaxes.py`, run through isolated Python only
-for a selected variable font. No converter or third-party Python package is needed. Each
+reported by FreeType's MM API through native `src/fontaxes.rs` FFI, run in a bounded Rust
+helper process only for a selected variable font. No converter or Python runtime is used. Each
 foreign tool has a deadline; `FontActions` allows their combined inspection and rollback budget.
 
 `tests/fonts.sh` drives real Fontconfig discovery, removal, invalid inputs, FIFOs, occupied
@@ -9395,7 +9395,7 @@ The selected-font viewer's **Use as default** panel runs `--font defaults`,
 `src/fontcli.rs` validates the selected face and requires its source or identical managed
 copy to be discoverable by Fontconfig before applying it. Terminal and system monospace
 choices require the face's Fontconfig spacing to be mono, dual or charcell.
-`src/fontdefaults.rs` embeds the standard-library-only `fontdefaults.py`; it changes only
+`src/fontdefaults.rs` and its focused Rust modules use the existing JSON codec and change only
 user preferences for desktop sans-serif (Fontconfig, GTK3/4 and writable GSettings), serif,
 monospace, Alacritty, Kitty, Ghostty or Foot. Fontconfig alias substitution replaces the
 requested alias so a later Omarchy `fonts.conf` preference cannot prepend the old choice.
@@ -9409,3 +9409,12 @@ need reopening; private application font overrides remain the application's choi
 GSettings under an isolated keyfile backend, restoration, conflicts and symlinks.
 `tests/font-defaults.qml` presses the real apply/restore buttons offscreen in private roots.
 No development test changes the operator's font preferences.
+
+The font backend has no Python helpers or new Cargo dependencies. Native preference modules
+retain the earlier JSON journal schema, including canonical GSettings strings, so old backups
+remain restorable. Alacritty edits use a bounded lexical TOML editor that preserves unrelated
+text and refuses ambiguous font tables; it supports inline, dotted and expanded font settings.
+`fontdefaults/tests.rs` covers native edits, special names, native terminal parsers, exact-byte
+restore, permissions, links and legacy journals. `tests/font-defaults.py` blocks `python3` while
+exercising the shipped CLI, including a real variable font when available; Python is used for
+test orchestration and fixtures only.
