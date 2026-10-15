@@ -33,9 +33,10 @@ opens the viewer but does not prove that the file is a usable font.
 
 Inspection accepts regular files up to 64 MiB. A format recognized by Fontconfig
 may still be unsupported by an individual application or by Qt's preview loader.
-There is no format conversion and no third-party Python package requirement.
-Runtime helpers use Fontconfig, FreeType, coreutils and Python; the Arch packages
-include the required dependency closure.
+There is no format conversion. The font backend is implemented in Rust, with native
+FreeType FFI for variable axes and Fontconfig/coreutils commands for discovery and
+cache refresh. It adds no Cargo dependencies and does not invoke Python. The Arch
+packages include the required runtime dependency closure.
 
 ## Install and uninstall
 
@@ -121,7 +122,11 @@ The suite uses isolated user directories and a private GSettings keyfile backend
 It covers real font installation, discovery and removal; invalid inputs and
 rollback; collection faces and variable axes; all seven preference destinations;
 restore conflicts, dotfile symlinks and failure of the desktop settings service.
-When installed, Kitty, Ghostty and Foot parse the generated preferences themselves.
+Native Rust tests also cover configuration editing and compatibility with backup
+journals written by earlier versions. When installed, Kitty, Ghostty and Foot parse
+the generated preferences themselves. A blocked-interpreter integration check
+verifies that font inspection, installation, defaults and variable axes work without
+invoking Python. Python remains a test harness and fixture generator.
 The offscreen UI tests exercise the shipped preview, pane/backend, editable sample,
 install controls and default apply/restore controls. They do not change the
 operator's font preferences.
