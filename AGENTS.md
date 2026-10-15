@@ -9389,3 +9389,23 @@ bindings. `font-formats.py` generates WOFF and BDF and exercises other real form
 the host. Existing ceilings remain `ui/Pane.qml` 1234, `ui/Preview.qml` 880 and
 `ui/PreviewColumn.qml` 605; new components remain below the soft budget. The startup unit
 inventory is unchanged; `tests/startup-units.txt` records their current 1673644-byte total.
+
+The selected-font viewer's **Use as default** panel runs `--font defaults`,
+`--font apply <path> <face-index> <destination>` or `--font restore <destination>`.
+`src/fontcli.rs` validates the selected face and requires its source or identical managed
+copy to be discoverable by Fontconfig before applying it. Terminal and system monospace
+choices require the face's Fontconfig spacing to be mono, dual or charcell.
+`src/fontdefaults.rs` embeds the standard-library-only `fontdefaults.py`; it changes only
+user preferences for desktop sans-serif (Fontconfig, GTK3/4 and writable GSettings), serif,
+monospace, Alacritty, Kitty, Ghostty or Foot. Fontconfig alias substitution replaces the
+requested alias so a later Omarchy `fonts.conf` preference cannot prepend the old choice.
+Existing `fonts.conf` is untouched. Terminal sizes and unrelated settings are retained;
+Ghostty fallback entries remain. Configurations in unsupported Alacritty layouts fail
+validation without writes. Dotfile symlinks are kept and their real user file is updated.
+Private journals under `$XDG_STATE_HOME/flea/font-defaults` retain the original preference
+across repeated applies. Restore refuses to overwrite external edits. Applications may
+need reopening; private application font overrides remain the application's choice.
+`tests/font-defaults.py` exercises all seven destinations, existing Omarchy alias priority,
+GSettings under an isolated keyfile backend, restoration, conflicts and symlinks.
+`tests/font-defaults.qml` presses the real apply/restore buttons offscreen in private roots.
+No development test changes the operator's font preferences.

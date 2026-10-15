@@ -3,19 +3,19 @@ use crate::json::escape;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-pub struct Face { pub family: String, pub style: String, pub index: u32, pub variable: bool, pub sample: String }
+pub struct Face { pub family: String, pub style: String, pub index: u32, pub variable: bool, pub monospace: bool, pub sample: String }
 pub struct Font { pub faces: Vec<Face>, pub format: String, pub extension: &'static str, pub axes: String }
 
 impl Font {
     pub fn faces_json(&self) -> String {
-        format!("[{}]", self.faces.iter().map(|f| format!("{{\"family\":\"{}\",\"style\":\"{}\",\"index\":{},\"variable\":{},\"sample\":\"{}\"}}",
-            escape(&f.family), escape(&f.style), f.index, f.variable, escape(&f.sample))).collect::<Vec<_>>().join(","))
+        format!("[{}]", self.faces.iter().map(|f| format!("{{\"family\":\"{}\",\"style\":\"{}\",\"index\":{},\"variable\":{},\"monospace\":{},\"sample\":\"{}\"}}",
+            escape(&f.family), escape(&f.style), f.index, f.variable, f.monospace, escape(&f.sample))).collect::<Vec<_>>().join(","))
     }
 }
 
 pub fn inspect(path: &Path, bytes: &[u8]) -> Result<Font, String> {
     let output = Command::new("timeout").args(["10", "fc-scan", "--format",
-        "%{family[0]}\x1f%{style[0]}\x1f%{index}\x1f%{fontformat}\x1f%{variable}\x1f%{charset}\x1e", "--"])
+        "%{family[0]}\x1f%{style[0]}\x1f%{index}\x1f%{fontformat}\x1f%{variable}\x1f%{charset}\x1f%{spacing}\x1e", "--"])
         .arg(path).stdin(Stdio::null()).stderr(Stdio::null()).output()
         .map_err(|_| "Font inspection needs fontconfig (fc-scan) and coreutils (timeout).")?;
     if !output.status.success() { return Err("Linux could not read this font. Metrics files (AFM/PFM) are not installable fonts on their own.".into()); }
@@ -25,13 +25,13 @@ pub fn inspect(path: &Path, bytes: &[u8]) -> Result<Font, String> {
     // Sample record: "Noto Sans\x1fRegular\x1f0\x1fTrueType\x1fTrue\x1f20-7e\x1e"; named instances use the upper index bits.
     for record in text.split('\x1e').filter(|s| !s.is_empty()) {
         let fields: Vec<_> = record.split('\x1f').collect();
-        if fields.len() != 6 || fields[0].is_empty() { return Err("The font metadata is invalid.".into()); }
+        if fields.len() != 7 || fields[0].is_empty() { return Err("The font metadata is invalid.".into()); }
         let index: u32 = fields[2].parse().map_err(|_| "The font face index is invalid.")?;
         if index >> 16 != 0 { continue; }
         let variable = fields[4] == "True";
         if let Some(face) = faces.iter_mut().find(|f| f.index == index) { face.variable |= variable; continue; }
         if faces.len() == 256 { return Err("The collection exceeds 256 font faces.".into()); }
-        faces.push(Face { family: fields[0].into(), style: fields[1].into(), index, variable, sample: sample(fields[5]) });
+        faces.push(Face { family: fields[0].into(), style: fields[1].into(), index, variable, monospace: matches!(fields[6], "90" | "100" | "110"), sample: sample(fields[5]) });
         format = fields[3].into();
     }
     if faces.is_empty() { return Err("Linux found no usable font faces in this file.".into()); }

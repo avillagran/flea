@@ -12,9 +12,15 @@ const O_NONBLOCK: i32 = 0x800;
 
 pub fn dispatch(args: &[String]) -> Option<i32> {
     if args.get(1).map(String::as_str) != Some("--font") { return None; }
-    let result = if args.len() == 4 && ["info", "install", "uninstall"].contains(&args[2].as_str()) {
+    let result = if args.get(2).map(String::as_str) == Some("defaults") && args.len() == 3 {
+        crate::fontdefaults::run("status", "", "")
+    } else if args.get(2).map(String::as_str) == Some("restore") && args.len() == 4 {
+        crate::fontdefaults::run("restore", &args[3], "")
+    } else if args.get(2).map(String::as_str) == Some("apply") && args.len() == 6 {
+        apply_default(Path::new(&args[3]), &args[4], &args[5])
+    } else if args.len() == 4 && ["info", "install", "uninstall"].contains(&args[2].as_str()) {
         manage(&args[2], Path::new(&args[3]))
-    } else { Err("Use --font info|install|uninstall <path>.".into()) };
+    } else { Err("Use --font info|install|uninstall <path>, defaults, apply <path> <face-index> <destination>, or restore <destination>.".into()) };
     match result {
         Ok(line) => { println!("{line}"); Some(0) }
         Err(e) => { println!("{{\"error\":\"{}\"}}", escape(&e)); Some(2) }
@@ -141,9 +147,26 @@ fn manage(verb: &str, path: &Path) -> Result<String, String> {
         }
         _ => {},
     }
-    let desktop_available = installed && crate::fontscan::discoverable(if source_installed { &path } else { &target });
+    let desktop_available = crate::fontscan::discoverable(&path) || (installed && crate::fontscan::discoverable(&target));
     Ok(format!("{{\"family\":\"{}\",\"style\":\"{}\",\"installed\":{},\"cacheOk\":{},\"sourceRemoved\":{},\"location\":\"{}\",\"desktopAvailable\":{},\"format\":\"{}\",\"faces\":{},\"axes\":{}}}",
         escape(&font.faces[0].family), escape(&font.faces[0].style), installed, cache_ok, verb == "uninstall" && source_installed,
         escape(&if source_installed { path } else { target }.to_string_lossy()),
         desktop_available, escape(&font.format), font.faces_json(), font.axes.trim()))
+}
+
+fn apply_default(path: &Path, index: &str, target: &str) -> Result<String, String> {
+    let path = path.canonicalize().map_err(|e| e.to_string())?;
+    let bytes = read_font(&path)?;
+    let temp = snapshot(&std::env::temp_dir(), &bytes)?;
+    let font = crate::fontscan::inspect(&temp.0, &bytes)?;
+    let index: u32 = index.parse().map_err(|_| "Choose a valid font face.")?;
+    let face = font.faces.iter().find(|f| f.index == index).ok_or("Choose a valid font face.")?;
+    let installed = user_fonts()?.join("flea").join(format!("{}.{}", md5::hex(&bytes), font.extension));
+    if !crate::fontscan::discoverable(&path) && !(same_file(&installed, &bytes)? && crate::fontscan::discoverable(&installed)) {
+        return Err("Install this font before using it as a default.".into());
+    }
+    if target != "desktop" && target != "serif" && !face.monospace {
+        return Err("Choose a monospaced font for this destination.".into());
+    }
+    crate::fontdefaults::run("apply", target, &face.family)
 }

@@ -1,5 +1,6 @@
 mod backend;
 mod fontcli;
+mod fontdefaults;
 mod fontscan;
 mod chooser;
 mod clip;
