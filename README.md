@@ -30,7 +30,7 @@ Large directories stay responsive: the window loads rows and requests thumbnails
 
 - **Four views.** List, columns, grid and two panes side by side, with tabs and natural filename sorting.
 - **Quick Look.** Press Space for images, PDFs, text, media, 3D model thumbnails and archive contents.
-- **Fonts.** Open a TTF or OTF with Enter or Space to preview the alphabet, numbers, symbols and editable sample text. Adjust the size, install for your user or uninstall a user font from the same view.
+- **Fonts.** Open fonts with Enter or Space to preview their glyphs, alphabet, numbers, symbols and editable sample text. Browse collection faces, adjust variable axes and sample size, and install or uninstall user fonts. Linux availability is checked through Fontconfig; an installation it cannot expose to applications is rolled back.
 - **File operations.** Copy, move, rename, trash, compress and extract, with an undo journal. Rename several files in one card. Pasting a folder onto one with the same name merges them, and undo reverts the merge. Opening a script, a program or an AppImage asks first: Run, Run in terminal or Open as text. Properties counts a folder's size and items.
 - **Tags.** Seven tags in your theme's colours, set with `T` and the keys 1 to 7, listed in the sidebar and found with `tag:red`.
 - **Search.** Ranked results replace the listing as you type. Esc returns to the folder and the cursor; Enter keeps the results.
