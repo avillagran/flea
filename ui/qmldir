@@ -196,3 +196,6 @@ PickerLifecycle 1.0 PickerLifecycle.qml
 ArchiveCompressDialog 1.0 ArchiveCompressDialog.qml
 ArchivePasswordDialog 1.0 ArchivePasswordDialog.qml
 ArchiveCards 1.0 ArchiveCards.qml
+
+FontActions 1.0 FontActions.qml
+PreviewFont 1.0 PreviewFont.qml
