@@ -9,6 +9,7 @@ var IMAGE = "image"
 var VIDEO = "video"
 var AUDIO = "audio"
 var PDF = "pdf"
+var FONT = "font"
 var TEXT = "text"
 var CODE = "code"
 var ARCHIVE = "archive"
@@ -52,6 +53,8 @@ function isMarkdown(name) {
     return false
 }
 
+function isFont(name) { return /\.(ttf|otf)$/i.test(String(name)) }
+
 function isPdf(name) {
     var lower = String(name).toLowerCase()
     return lower.length > 4 && lower.indexOf(".pdf", lower.length - 4) !== -1
@@ -90,6 +93,7 @@ function isPreviewable(row) {
 
 // A name the icon cannot route, told apart by its own extension: a PDF shares x-office-document, and widened archives draw other marks.
 function stateByExtension(name) {
+    if (isFont(name)) return FONT
     if (isPdf(name)) return PDF
     if (Archive.isArchive(name)) return ARCHIVE
     return ""
@@ -97,6 +101,7 @@ function stateByExtension(name) {
 
 // Quick Look's kind from the icon, the name and a served thumbnail, Facts.state's row-free tests; code and markdown read as text.
 function quickLookKind(icon, name, thumbnailed) {
+    if (isFont(name)) return FONT
     if (isPdf(name)) return PDF
     if (isMarkdown(name)) return TEXT
     // The client's own extension rule, because the backend's icon cannot name the widened formats.

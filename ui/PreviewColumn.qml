@@ -93,6 +93,7 @@ Item {
     readonly property bool isMarkdownRow: root.rowState === Facts.TEXT && root.row !== null
         && Kinds.isMarkdown(root.row.n)
     // The Markdown pane stays null without a Markdown row, so every reader guards the loader item.
+    readonly property var fontItem: fontLoader.item
     readonly property var markdown: markdownLoader.item
     // The Markdown reader's activation, read by the Loader and its item together so the two cannot drift apart.
     readonly property bool markdownActive: root.visible && !root.manualHold && root.rowState === Facts.TEXT && root.isMarkdownRow
@@ -104,7 +105,7 @@ Item {
     // The states that draw a picture of the file itself. A PDF draws its own page, loading draws the
     // crawl, and a multi-selection is a summary and never the cursor row's own picture.
     readonly property bool wantsThumb: root.previewState !== Facts.LOADING
-        && root.previewState !== Facts.PDF && root.previewState !== Facts.MULTI
+        && root.previewState !== Facts.FONT && root.previewState !== Facts.PDF && root.previewState !== Facts.MULTI
     // A thumbnail path is not a thumbnail: the cache file can be evicted between the pane's answer
     // and the decode, and an Image that failed to load draws nothing at all. The fallback waits for
     // Ready instead, because a file off a slow mount would leave the frame blank for seconds.
@@ -137,7 +138,7 @@ Item {
         Rectangle {
             id: frame
             width: parent.width
-            height: root.isMarkdownRow
+            height: (root.isMarkdownRow || root.rowState === Facts.FONT)
                 ? Math.max(0, root.height - 2 * Theme.spacing.rowPaddingX - nameText.height
                     - factsTable.height - 3 * Theme.spacing.gap)
                 : Math.round(width * root.frameRatio)
@@ -264,6 +265,19 @@ Item {
                     item.compact = true
                 }
             }
+            Loader {
+                id: fontLoader
+                anchors.fill: parent
+                anchors.margins: Theme.spacing.hairline
+                active: root.visible && !root.manualHold && !root.overlayOpen && root.previewState === Facts.FONT
+                source: "PreviewFont.qml"
+                onLoaded: {
+                    item.compact = true
+                    item.path = Qt.binding(function () { return root.path })
+                    item.expandRequested.connect(root.expandRequested)
+                }
+            }
+
             // The PDF's own page, which is the frame's whole content for that state. QtPdf is
             // reached only through this Loader, so a folder with no PDF in it never opens one.
             Flickable {
@@ -512,6 +526,8 @@ Item {
         case Facts.ERROR:
         case Facts.UNSUPPORTED:
         case Facts.LOADING:
+            return false
+        case Facts.FONT:
             return false
         case Facts.PDF:
             return !root.pdfDrawn

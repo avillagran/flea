@@ -9349,3 +9349,32 @@ The strays and rail-frame join onto the settled stage5 moves five ceilings, each
 The picker's empty-folder shot waits for the empty state to rest: `ui/EmptyState.qml` gains `atRest` (148 to 150 lines, inside its soft budget), true under reduced motion, or once the caption fade has stopped, the hero is fully opaque and either a fixed caption shows or the third beat's mark is drawn whole; the picker's IPC `snapshot()` reports it as `emptyRest` on the existing line, and `tests/picker-native.py` waits on it before any capture of an empty folder, since the mark's 1800 ms draw on each 2800 ms beat kept ten 0.1 s shots from ever matching. The two lines move the `bytes` line of `tests/startup-units.txt` from 1672796 to 1673140.
 
 The rail lit-place test presses the rail through its `PointHandler` instead of setting `pointerFocus`, and releases past the drag threshold so the row never activates; `tests/sidebar-flows.qml` moves 683 to 687 in `tools/flea-file-budget`, re-derived with `wc -l`.
+
+
+## Font previews and user installation
+
+`ui/PreviewFont.qml` is loaded only for the selected TTF/OTF, through Quick Look or the
+column preview. Enter uses the same Quick Look route as Space. Its `FontLoader` and
+`FontActions.qml` helper are absent on other file kinds; no directory scan loads fonts.
+The sample editor consumes text keys, including Space, and Escape closes Quick Look.
+
+`flea --font info|install|uninstall <path>` (`src/fontcli.rs`) runs outside the backend
+listing loop. It accepts regular SFNT TTF/OTF files up to 64 MiB, validates a private
+snapshot through `fc-scan`, installs that same snapshot atomically without replacing a
+file, and refreshes Fontconfig through `fc-cache`. Both tools have deadlines via coreutils
+`timeout`. Installation uses `$XDG_DATA_HOME/fonts/flea` (default `~/.local/share/fonts/flea`).
+Content-derived names distinguish styles and versions; every existing candidate is compared
+byte for byte, so the digest alone never authorizes replacement or removal. Uninstall removes
+that matching installed copy, preserving the downloaded source. A file browsed directly
+inside the user's font roots (`$XDG_DATA_HOME/fonts` or `~/.fonts`) can itself be uninstalled;
+system files and source symlinks cannot. Fonts installed elsewhere are outside this manager.
+
+`tests/fonts.sh` covers real Fontconfig installation, repeat installation, renamed sources,
+uninstallation, intact downloads, invalid files, FIFOs, planted symlinks and occupied targets
+under isolated user roots. Its offscreen Quick Look leg drives Enter's navigation route,
+the real install/uninstall buttons, sample size, text input, close and reopen.
+The feature's existing-file ceilings, re-derived with `wc -l`, are `ui/Pane.qml` 1234,
+`ui/Preview.qml` 880 and `ui/PreviewColumn.qml` 605. New components remain below the soft budget.
+
+The startup unit inventory is unchanged; `tests/startup-units.txt` records 1673459 bytes,
+the sum of the existing units after the font classifier and the Enter route were added.

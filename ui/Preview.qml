@@ -29,6 +29,8 @@ Item {
     property int size: 0
     property string kind: ""
     readonly property bool isMedia: root.kind === "audio" || root.kind === "video"
+    readonly property bool isFont: root.kind === "font"
+    readonly property var fontItem: fontLoader.item
     readonly property bool isPdf: root.kind === "pdf"
     readonly property bool isImage: root.kind === "image"
     readonly property bool isArchive: root.kind === "archive"
@@ -51,6 +53,7 @@ Item {
     readonly property bool archiveFailed: root.isArchive && root.archiveMeta !== null && root.archiveMeta.archiveFailed === true
     // For ui/Ipc.qml: the item drawing this kind's content, whether a player exists, and what the text and archive panes hold.
     function surfaceItem() {
+        if (root.isFont) return fontLoader.item
         if (root.isImage) return imageLoader.item
         if (root.isMedia) return mediaLoader.item
         if (root.isPdf) return pdfLoader.item
@@ -85,6 +88,7 @@ Item {
         if (root.isMedia) return (mediaLoader.item && mediaLoader.item.path === root.path) ? mediaLoader.item.status : "loading"
         if (root.isPdf) return (pdfLoader.item && pdfLoader.item.failed) ? "This file could not be read." : "pdf"
         if (root.isImage) return imageLoader.item ? imageLoader.item.status : "loading"
+        if (root.isFont) return fontLoader.item ? fontLoader.item.status : "loading"
         if (root.isArchive) return root.archiveMeta === null ? "loading" : (root.archiveFailed ? "This archive could not be read." : "archive")
         if (root.kind === "text") return root.isMarkdown
             ? (markdownLoader.item ? markdownLoader.item.status : "loading") : textPane.status
@@ -689,6 +693,19 @@ Item {
                     item.active = Qt.binding(function () { return root.isMarkdown })
                     item.closeFocused = Qt.binding(function () { return root.markdownCloseFocused })
                     item.closeRequested.connect(root.close)
+                }
+            }
+
+            Loader {
+                id: fontLoader
+                anchors.fill: parent
+                active: root.active && root.isFont
+                source: "PreviewFont.qml"
+                onLoaded: {
+                    item.pane = Qt.binding(function () { return root.pane })
+                    item.path = Qt.binding(function () { return root.path })
+                    item.closeRequested.connect(root.close)
+                    item.focusFirst()
                 }
             }
 
