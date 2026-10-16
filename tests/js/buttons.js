@@ -129,7 +129,6 @@ function run(check) {
     check("set members sit four hairlines apart", Buttons.SET_GAP, 4)
     check("settings segments sit two hairlines apart", Buttons.SEGMENT_GAP, 2)
     check("the segments read that gap", Source.source("ui/SettingsSegment.qml").indexOf("spacing: Theme.spacing.hairline * Buttons.SEGMENT_GAP") >= 0, true)
-    check("the picker's chips read the set gap", Source.source("ui/PickerChrome.qml").indexOf("spacing: Theme.spacing.hairline * Buttons.SET_GAP") >= 0, true)
     check("the thick focus frame is 2 px", Buttons.RING, 2)
     check("a disabled control dims", Buttons.DISABLED_OPACITY, 0.55)
     check("hover is 8 percent of the ink", Buttons.WASH_HOVER, 0.08)
@@ -142,7 +141,7 @@ function run(check) {
     var theme = Source.source("ui/Theme.qml")
     check("Theme's washes and dim read Buttons.js",
         ["washHover: Buttons.WASH_HOVER", "washActive: Buttons.WASH_PRESS", "disabledOpacity: Buttons.DISABLED_OPACITY"].map(function (line) { return theme.indexOf(line) >= 0 }).join(" "), "true true true")
-    var pressers = ["ui/ChromeButton.qml", "ui/PickerChrome.qml", "ui/DialogButton.qml"]
+    var pressers = ["ui/ChromeButton.qml", "ui/DialogButton.qml"]
     for (var p = 0; p < pressers.length; p++) {
         var presser = codeOf(Source.source(pressers[p]))
         check(pressers[p] + " presses with the shared scale and duration, no literal",
@@ -228,18 +227,18 @@ function run(check) {
     check("the reader sees a border width inside a one-line item", valuesOf("Rectangle { border.width: 2; color: x }", "border.width").join("|"), "2")
     check("the block reader finds a nested block whole", blockOf("A { id: x; B { y: 1 } } C { z: 2 }", "id: x"), "{ id: x; B { y: 1 } }")
 
-    // A ChromeButton under a strip rule drawn in its own last row takes the rule's row off its own frame; the inline PDF strip and the PreviewColumn marks draw no such rule.
-    var ruled = { "ui/PdfViewer.qml": 6, "ui/MarkdownPane.qml": 1, "ui/PermissionsDialog.qml": 1, "ui/PreviewColumn.qml": 0, "ui/ChromeBar.qml": 6, "ui/ChromeModes.qml": 1, "ui/PickerChrome.qml": 1, "ui/TrashView.qml": 2 }
+    // A ChromeButton under a strip rule takes the rule's row off its frame; MarkdownPane delegates its mark to QuickLookBar, and PreviewColumn draws no mark.
+    var ruled = { "ui/PdfViewer.qml": 6, "ui/QuickLookBar.qml": 1, "ui/MarkdownPane.qml": 0, "ui/PermissionsDialog.qml": 1, "ui/PreviewColumn.qml": 0, "ui/ChromeBar.qml": 6, "ui/ChromeModes.qml": 1, "ui/PickerChrome.qml": 1, "ui/TrashView.qml": 2 }
     for (var host in ruled) {
         var hostText = Source.source(host)
         var wanted = ruled[host]
         var drawn = hostText.split("Flea.ChromeButton {").length - 1
         check(host + " gives every strip rule's row to its mark frame", hostText.split("ruleRows: Theme.spacing.hairline").length - 1, wanted)
-        check(host + " hosts the buttons the pin counts", wanted === 0 || drawn === wanted, true)
+        check(host + " hosts the buttons the pin counts", drawn === wanted, true)
     }
 
     // Every chrome mark frames itself in the foreground hairline for the keyboard; no host gives a mark an accent focus line.
-    var hosts = ["ui/PdfViewer.qml", "ui/MarkdownPane.qml", "ui/PreviewColumn.qml", "ui/ChromeBar.qml", "ui/ChromeModes.qml",
+    var hosts = ["ui/PdfViewer.qml", "ui/QuickLookBar.qml", "ui/ChromeBar.qml", "ui/ChromeModes.qml",
         "ui/PermissionsDialog.qml", "ui/PickerChrome.qml", "ui/TrashView.qml"]
     for (var h = 0; h < hosts.length; h++) {
         var hostCode = codeOf(Source.source(hosts[h]))

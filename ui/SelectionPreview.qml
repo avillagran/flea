@@ -34,7 +34,7 @@ Flea.PreviewColumn {
         if (!root.row || !root.pane) return
         var look = root.pane.quickLook()
         look.open(root.path, root.row.i, root.row.s, root.kindName)
-        look.pdfItem.expandFrom(root.pdfPage(), root.pdfZoom)
+        look.pdfItem.expandFrom(root.pdfPage(), PreviewKeys.PDF_ZOOM_MIN)
     }
 
     Keys.onPressed: function(event) {
@@ -351,7 +351,7 @@ Flea.PreviewColumn {
                 entries: message.entries, unpacked: message.unpacked, archiveFailed: message.afailed,
                 names: message.names, lines: message.lines, partial: message.partial,
                 linesFailed: message.lfailed, target: message.target, targetDir: message.targetdir,
-                owner: message.owner || "", orient: message.orient || 1 }
+                owner: message.owner || "", orient: message.orient || 1, frames: message.frames || 0, photo: message.photo || null }
         }
     }
     Component.onCompleted: root.followSelection()

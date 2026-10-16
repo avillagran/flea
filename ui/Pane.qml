@@ -216,6 +216,7 @@ FocusScope {
     // Set by the window's flash host while it covers this pane; every gate below reads it.
     property bool flashActive: false
     readonly property alias menuActions: menuActions
+    readonly property alias menuHost: menu
     readonly property var emptyState: paneStates.emptyItem
     readonly property var stateMessageItem: paneStates.messageItem
     readonly property alias retrySelectionText: wire.retrySelectionText
@@ -594,6 +595,7 @@ FocusScope {
         if (trashHost.confirming) return
         if (action === "openTrash" || action === "emptyTrash" || action === "restoreAll") { trashHost.action(action); return }
         if (action === "settings") { root.settingsPanel.open(root); return }
+        if (action === "toggleLangMarks") { ViewState.toggleLangMarks(); return }
         if (action === "permissions") { root.openPermissions(); return }
         if (action === "rename" && root.openBulkRename(paths)) return  // several rows open the bulk card
         // Recent is a history, not a directory: a new file there would land in the root it stands on.
@@ -853,7 +855,7 @@ FocusScope {
     Rectangle {
         anchors { top: root.searchMode.length > 0 ? header.bottom : panePath.bottom; bottom: parent.bottom; left: railHost.right; right: parent.right }
         visible: Glass.on
-        color: Glass.background
+        color: Glass.listBackground
     }
 
     Flea.PanePath {
@@ -1071,8 +1073,9 @@ FocusScope {
     readonly property bool menuValuesLive: menu.preparing || menu.opened || root.sheetReadsMenu
     readonly property var menuPermissionRow: root.menuValuesLive ? root.permissionSelection() : null
 
-    Flea.ContextMenu {
+    Flea.MenuHost {
         id: menu
+        pane: root
         parent: root.overlayParent || root
         focusOwner: root.listArea
         showHidden: root.showHidden
@@ -1089,6 +1092,8 @@ FocusScope {
         archiveName: root.cursorRow ? root.cursorRow.n : ""
         rowMode: root.menuPermissionRow ? root.menuPermissionRow.p : 0
         selectionCount: root.menuValuesLive ? Ops.targetIndices(root).length : 0
+        // Held kinds answer at once; the menu snapshot carries kinds for marks outside the window.
+        compareKinds: root.menuValuesLive ? Ops.menuKinds(root) : []
         cursorIsTarget: root.menuValuesLive && root.isSingleCursorTarget()
         openWithApps: menuActions.openWithApps
         openWithLoaded: menuActions.openWithLoaded
@@ -1181,7 +1186,7 @@ FocusScope {
 
     // The one ui/ContextMenu.qml this pane owns, for ui/Ipc.qml: entries, flyout and row geometry
     // are read off it directly, so a new reader costs the seam a line and this file none.
-    function contextMenu() { return menu }
+    function contextMenu() { return menu.item || menu }
 
     Flea.PaneStates {
         id: paneStates

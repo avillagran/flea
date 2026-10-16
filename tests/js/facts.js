@@ -43,6 +43,16 @@ function run(check) {
           Facts.state(named("report.odt", "x-office-document"), 1, false, ""), "unsupported")
     check("but a pdf sharing that icon is still told apart by its extension",
           Facts.state(named("manual.pdf", "x-office-document"), 1, false, ""), "pdf")
+    check("CSV and TSV reach text despite their spreadsheet icon",
+          ["table.csv", "table.TSV"].map(function (name) {
+              return Facts.state(named(name, "x-office-spreadsheet"), 1, false, "")
+                  + ":" + Kinds.quickLookKind("x-office-spreadsheet", name)
+          }).join("|"), "text:text|text:text")
+    check("binary spreadsheets and names containing csv remain unsupported",
+          ["table.xlsx", "table.ods", "table.csv.bak"].map(function (name) {
+              return Facts.state(named(name, "x-office-spreadsheet"), 1, false, "")
+                  + ":" + Kinds.quickLookKind("x-office-spreadsheet", name)
+          }).join("|"), "unsupported:unsupported|unsupported:unsupported|unsupported:unsupported")
     // The canvas's own Text tile is field-bench-notes.md, and .md carries the office icon too.
     check("and markdown reaches the text frame, which is what the canvas draws",
           Facts.state(named("field-bench-notes.md", "x-office-document"), 1, false, ""), "text")
@@ -110,6 +120,17 @@ function run(check) {
     check("and its pixels read as the canvas writes them",
           valueOf(Facts.facts("image", row("image-x-generic", 2100000), { w: 2560, h: 1440 }, "PNG image"), "Pixels"),
           "2560 × 1440")
+    // Animated GIF specimen: Frames follows Pixels in the same cells, and a still picture states none.
+    check("an animated gif adds Frames after Pixels",
+          labels(Facts.facts("image", row("image-x-generic", 1200000), { w: 480, h: 270, frames: 24 }, "GIF image")),
+          "Kind|Size|Modified|Pixels|Frames")
+    check("and its frames read as a bare count",
+          valueOf(Facts.facts("image", row("image-x-generic", 1200000), { w: 480, h: 270, frames: 24 }, "GIF image"), "Frames"),
+          "24")
+    check("a one-frame gif and a png draw no Frames row",
+          labels(Facts.facts("image", row("image-x-generic", 1200000), { w: 480, h: 270, frames: 1 }, "GIF image")) + "|"
+              + labels(Facts.facts("image", row("image-x-generic", 2100000), { w: 2560, h: 1440 }, "PNG image")),
+          "Kind|Size|Modified|Pixels|Kind|Size|Modified|Pixels")
     check("video states Kind, Size, Modified, Duration, Pixels",
           labels(Facts.facts("video", row("video-x-generic", 48000000), { w: 1920, h: 1080 }, "MP4 video", { duration: "1:12" })),
           "Kind|Size|Modified|Duration|Pixels")
@@ -297,4 +318,98 @@ function run(check) {
           "214 entries \u00b7 3.4 GB unpacked|1 entry||0 entries|")
     check("and the Quick Look line groups a four-figure count",
           Facts.archiveLine({ entries: 1204, unpacked: 0, names: [] }), "1,204 entries")
+
+    // TallPreviews: the frame's shape follows the row's kind alone, and the facts fold into one line whose Kind elides alone.
+    var every = [Facts.TEXT, Facts.CODE, Facts.ARCHIVE, Facts.IMAGE, Facts.VIDEO, Facts.AUDIO, Facts.PDF,
+                 Facts.SYMLINK, Facts.MULTI, Facts.LOADING, Facts.ERROR, Facts.UNSUPPORTED]
+    check("text, code, an archive list and a PDF are tall and every other kind keeps the 16 by 10 frame",
+          every.map(function (st) { return Facts.tall(st) }).join("|"),
+          "true|true|true|false|false|false|true|false|false|false|false|false")
+    function line(st, size, meta, kind, extra) {
+        var l = Facts.compactLine(st, row("text-x-generic", size), meta, kind, extra)
+        return l.kind + "|" + l.tail
+    }
+    check("code states its Kind, size and lines, the Kind apart from the tail that never elides",
+          line(Facts.CODE, 4100, { lines: 132 }, "Rust source code"), "Rust source code| \u00b7 4.1 kB \u00b7 132 lines")
+    check("a Markdown document reads the same shape",
+          line(Facts.TEXT, 6200, { lines: 48 }, "Markdown document"), "Markdown document| \u00b7 6.2 kB \u00b7 48 lines")
+    check("one line is a singular and none is a plural",
+          line(Facts.TEXT, 3, { lines: 1 }, "Plain text") + "#" + line(Facts.TEXT, 0, { lines: 0 }, "Plain text"),
+          "Plain text| \u00b7 3 B \u00b7 1 line#Plain text| \u00b7 0 B \u00b7 0 lines")
+    check("a count the backend stopped early keeps its floor and a four-figure count its group",
+          line(Facts.CODE, 4100, { lines: 5000, partial: true }, "Rust source code") + "#" + line(Facts.TEXT, 4100, { lines: 1204 }, "Plain text"),
+          "Rust source code| \u00b7 4.1 kB \u00b7 > 5,000 lines#Plain text| \u00b7 4.1 kB \u00b7 1,204 lines")
+    check("a count that is not there yet, or could not be read, leaves the line at Kind and size",
+          line(Facts.CODE, 4100, null, "Rust source code") + "#" + line(Facts.CODE, 4100, { linesFailed: true, lines: 0 }, "Rust source code"),
+          "Rust source code| \u00b7 4.1 kB#Rust source code| \u00b7 4.1 kB")
+    check("an archive states its entries, with a singular, an exact zero and nothing for a failed index",
+          line(Facts.ARCHIVE, 9000, { entries: 214 }, "Zip archive") + "#" + line(Facts.ARCHIVE, 9000, { entries: 1 }, "Zip archive")
+          + "#" + line(Facts.ARCHIVE, 9000, { entries: 0, archiveFailed: false }, "Zip archive")
+          + "#" + line(Facts.ARCHIVE, 9000, { entries: 0, archiveFailed: true }, "Zip archive"),
+          "Zip archive| \u00b7 9.0 kB \u00b7 214 entries#Zip archive| \u00b7 9.0 kB \u00b7 1 entry#Zip archive| \u00b7 9.0 kB \u00b7 0 entries#Zip archive| \u00b7 9.0 kB")
+    check("a PDF states its pages with a singular, a grouped count and nothing until the document is read",
+          line(Facts.PDF, 2400000, null, "PDF document", { pages: "12" }) + "#" + line(Facts.PDF, 31000, null, "PDF document", { pages: "1" })
+          + "#" + line(Facts.PDF, 9000000, null, "PDF document", { pages: "1204" }) + "#" + line(Facts.PDF, 31000, null, "PDF document", { pages: "" })
+          + "#" + line(Facts.PDF, 31000, null, "PDF document"),
+          "PDF document| \u00b7 2.4 MB \u00b7 12 pages#PDF document| \u00b7 31.0 kB \u00b7 1 page#PDF document| \u00b7 9.0 MB \u00b7 1,204 pages#PDF document| \u00b7 31.0 kB#PDF document| \u00b7 31.0 kB")
+    check("a Kind that looks like a placeholder is kept whole, and a missing Kind or row states what it can",
+          line(Facts.CODE, 4100, { lines: 2 }, "100% %2 source") + "#" + line(Facts.CODE, 4100, { lines: 2 }, "")
+          + "#" + JSON.stringify(Facts.compactLine(Facts.CODE, null, { lines: 2 }, "Rust source code")),
+          "100% %2 source| \u00b7 4.1 kB \u00b7 2 lines#|4.1 kB \u00b7 2 lines#{\"kind\":\"\",\"tail\":\"\"}")
+    check("the tall frame is the column less its margins, the name, the facts and the two gaps between them",
+          Facts.tallHeight(700, 12, 20, 18, 9) + "|" + Facts.tallHeight(40, 12, 20, 18, 9), "620|0")
+
+    // The photo facts: the backend sends the EXIF values as stored and the column and Properties word them here.
+    var canon = { make: "Canon", model: "Canon EOS R6", lens: "RF35mm F1.8 MACRO IS STM", exp: [1, 250], fnum: [28, 10], iso: 400,
+                  focal: [35, 1], taken: "2026:09:12 18:31:00" }
+    var shot = Facts.photoFacts(canon)
+    check("a photo's facts read as the board writes them",
+          [shot.camera, shot.lens, shot.exposure, shot.focal, shot.taken].join("|"),
+          "Canon EOS R6|RF35mm F1.8 MACRO IS STM|1/250 s \u00b7 f/2.8 \u00b7 ISO 400|35 mm|2026-09-12 18:31")
+    check("a model that already starts with the make's first word stands alone, in any case",
+          Facts.photoFacts({ make: "NIKON CORPORATION", model: "Nikon Z 6" }).camera + "|" + Facts.photoFacts({ make: "OLYMPUS IMAGING CORP.", model: "OLYMPUS E-M1" }).camera,
+          "Nikon Z 6|OLYMPUS E-M1")
+    check("a model that does not start with the make is joined to it",
+          Facts.photoFacts({ make: "SONY", model: "ILCE-7M3" }).camera + "|" + Facts.photoFacts({ make: "FUJIFILM", model: "X-T4" }).camera,
+          "SONY ILCE-7M3|FUJIFILM X-T4")
+    check("a make or a model alone is the camera, and neither is no camera",
+          Facts.photoFacts({ make: "Canon" }).camera + "|" + Facts.photoFacts({ model: "X100V" }).camera + "|" + Facts.photoFacts({}).camera, "Canon|X100V|")
+    check("an exposure under 0.3 s is a fraction and from 0.3 s it is a number of seconds, the way a camera shows it",
+          [[1, 8000], [10, 2500], [1, 4], [3, 10], [1, 3], [1, 2], [6, 10], [8, 10], [1, 1], [2, 1], [3, 2], [30, 1]].map(function (e) { return Facts.photoFacts({ exp: e }).exposure }).join("|"),
+          "1/8000 s|1/250 s|1/4 s|0.3 s|0.3 s|0.5 s|0.6 s|0.8 s|1 s|2 s|1.5 s|30 s")
+    check("the aperture keeps one decimal and drops a trailing zero",
+          [[28, 10], [4, 1], [18, 10], [56, 10], [14, 10]].map(function (f) { return Facts.photoFacts({ fnum: f }).exposure }).join("|"),
+          "f/2.8|f/4|f/1.8|f/5.6|f/1.4")
+    check("an absent part of the exposure is left out and none leaves no exposure",
+          [{ iso: 800 }, { fnum: [28, 10], iso: 100 }, { exp: [1, 60], fnum: [4, 1] }, { exp: [0, 1], fnum: [1, 0], iso: 0 }]
+              .map(function (p) { return Facts.photoFacts(p).exposure }).join("|"),
+          "ISO 800|f/2.8 \u00b7 ISO 100|1/60 s \u00b7 f/4|")
+    check("the focal length rounds to a whole number of millimetres and zero is absent",
+          [[35, 1], [244, 10], [245, 10], [0, 1], [5, 0]].map(function (f) { return Facts.photoFacts({ focal: f }).focal }).join("|"),
+          "35 mm|24 mm|25 mm||")
+    check("a taken stamp is written like Modified and a malformed one is absent",
+          Facts.photoFacts({ taken: "2026:01:02 03:04:05" }).taken + "|" + Facts.photoFacts({ taken: "0000:00:00 00:00:00" }).taken + "|" + Facts.photoFacts({ taken: "yesterday" }).taken,
+          "2026-01-02 03:04||")
+    check("nothing reads Unknown: a missing photo is a set of empty strings",
+          Object.keys(Facts.photoFacts(null)).map(function (k) { return Facts.photoFacts(null)[k] }).join("|") + "|" + Facts.photoFacts(undefined).camera, "||||" + "|")
+
+    // Raw.html: the column follows Kind, Size, Modified, Camera, Lens, Exposure, Focal, Pixels, Taken.
+    var rawMeta = { w: 0, h: 0, photo: Object.assign({ w: 6000, h: 4000 }, canon) }
+    check("a raw image's column rows follow the board's order",
+          labels(Facts.facts("image", row("image-x-generic", 31200000), rawMeta, "Canon CR3 raw image")),
+          "Kind|Size|Modified|Camera|Lens|Exposure|Focal|Pixels|Taken")
+    check("a raw image's rows carry the worded values",
+          valueOf(Facts.facts("image", row("image-x-generic", 31200000), rawMeta, "Canon CR3 raw image"), "Exposure") + "|"
+          + valueOf(Facts.facts("image", row("image-x-generic", 31200000), rawMeta, "Canon CR3 raw image"), "Pixels"),
+          "1/250 s \u00b7 f/2.8 \u00b7 ISO 400|6000 \u00d7 4000")
+    check("a raw image with no EXIF keeps today's rows and nothing reads Unknown",
+          labels(Facts.facts("image", row("image-x-generic", 2100000), { w: 0, h: 0, photo: null }, "Canon CR3 raw image")), "Kind|Size|Modified")
+    check("a raw image with some facts draws only those, in order",
+          labels(Facts.facts("image", row("image-x-generic", 2100000), { photo: { model: "X-T4", make: "FUJIFILM", taken: "2026:01:02 03:04:05" } }, "Fujifilm RAF raw image")),
+          "Kind|Size|Modified|Camera|Taken")
+    check("a plain image without a photo keeps Kind, Size, Modified, Pixels",
+          labels(Facts.facts("image", row("image-x-generic", 2100000), { w: 2560, h: 1440 }, "PNG image")), "Kind|Size|Modified|Pixels")
+    check("a raw image's Pixels row is its sensor size from the photo facts, and a frame header's size wins",
+          Facts.pixels({ w: 0, h: 0, photo: { w: 6000, h: 4000 } }) + "|" + Facts.pixels({ w: 64, h: 48, photo: { w: 6000, h: 4000 } }) + "|"
+          + Facts.pixels({ w: 0, h: 0, photo: { w: 6000 } }) + "|" + Facts.pixels({ photo: null }), "6000 \u00d7 4000|64 \u00d7 48||")
 }

@@ -6,6 +6,20 @@
 // from the listing that follows it. Split out of tests/js/mounts.js with ui/js/Devices.js, which
 // keeps the gvfs half and the rail's shared vocabulary.
 
+function powerQueue(listing, disk, entries) {
+    var expected = ""
+    try {
+        // Sample input: {"blockdevices":[{"name":"sda","path":"/dev/sda","mountpoints":[null],"type":"disk"}]}, a valid lsblk listing with no fallback warning.
+        JSON.parse(String(listing || ""))
+    } catch (e) {
+        expected = "Device listing for " + disk + " could not be parsed (" + e.message + "); mounted rail volumes were queued instead."
+    }
+    console.log("power-off warning begin: " + expected)
+    var queue = Devices.powerOffQueue(listing, disk, entries)
+    console.log("power-off warning end")
+    return queue
+}
+
 function run(check) {
     // minipc's own listing, taken live on 2026-09-11 with one stick in: the encrypted root carries
     // four mountpoints including /, which is why the parser reads MOUNTPOINTS and not MOUNTPOINT.
@@ -34,6 +48,20 @@ function run(check) {
     check("a volume with a mountpoint reads as mounted", d[1].mounted, true)
     check("a removable volume is marked removable, which is what offers it Eject", d[1].removable, true)
     check("a loop device is not a device row", d.map(function (e) { return e.label }).join(","), "nvme0n1,128GB")
+    check("a real removable volume is not marked loop", d[1].loop, false)
+
+    var wholeStick = { blockdevices: [{ name: "sdb", path: "/dev/sdb", type: "disk", rm: true, tran: "usb",
+        fstype: "iso9660", label: "WHOLE_STICK", mountpoints: ["/run/media/user/WHOLE_STICK"], children: [
+            { name: "sdb1", path: "/dev/sdb1", type: "part", fstype: "iso9660", mountpoints: ["/run/media/user/CHILD"], rm: true },
+            { name: "sdb2", path: "/dev/sdb2", type: "part", mountpoints: [null], rm: true }] }] }
+    var wholeRows = Devices.parseDevices(JSON.stringify(wholeStick))
+    var whole = wholeRows.filter(function (e) { return e.device === "/dev/sdb" })[0]
+    check("a stick mounted whole is a row even with a partition table", wholeRows.length, 2)
+    check("the whole stick keeps its mountpoint", whole ? whole.path : "missing", "/run/media/user/WHOLE_STICK")
+    check("the whole stick still ejects through gio mount -e", whole ? Devices.ejectCommand(whole).join(" ") : "missing",
+          "gio mount -e /run/media/user/WHOLE_STICK")
+    check("the mounted whole stick still recurses into its mounted child", wholeRows.some(function (e) { return e.device === "/dev/sdb1" }), true)
+
     // The system disk is the one place the walk never goes: /boot and /home are the box's own
     // plumbing, and the disk row above already stands for that drive.
     check("no partition of the system disk becomes a row of its own",
@@ -262,6 +290,23 @@ function run(check) {
     // Only the safe verdict may say safe; the other two tell the user to leave the stick in.
     check("the safe verdict earns the unplug sentence", Eject.sentence("safe", "128GB").text, "Ejected 128GB. It is safe to unplug.")
     check("the safe verdict is not an error", Eject.sentence("safe", "128GB").isError, false)
+    check("a real drive keeps the safe unplug sentence", Eject.sentence("safe", "128GB", [], false).text, "Ejected 128GB. It is safe to unplug.")
+    check("a loop image's safe verdict says only that it was ejected", Eject.sentence("safe", "OMARCHY_202608", [], true).text, "Ejected OMARCHY_202608.")
+    check("a loop image's safe verdict is not an error", Eject.sentence("safe", "ISO", [], true).isError, false)
+    check("a loop image's successful eject never says unplug", /unplug/i.test(Eject.sentence("safe", "ISO", [], true).text), false)
+    check("a failed loop detach keeps its exact sentence", Eject.sentence("attached", "ISO", [], true).text, "Unmounted ISO, but its loop device is still attached.")
+    var imageOtherVerdicts = [
+        { verdict: "attached", blockers: [] },
+        { verdict: "mounted", blockers: [] },
+        { verdict: "mounted", blockers: ["first"] },
+        { verdict: "mounted", blockers: ["first", "second"] },
+        { verdict: "unknown", blockers: [] }
+    ]
+    imageOtherVerdicts.forEach(function (test) {
+        check("loop identity preserves the " + test.verdict + " verdict with " + test.blockers.length + " blockers",
+              JSON.stringify(Eject.sentence(test.verdict, "ISO", test.blockers, true)),
+              JSON.stringify(Eject.sentence(test.verdict, "ISO", test.blockers, false)))
+    })
     check("the mounted verdict with the row itself still mounted says try again", Eject.sentence("mounted", "128GB", []).text, "128GB is still mounted; close what is using it.")
     check("the mounted verdict is an error", Eject.sentence("mounted", "128GB", []).isError, true)
     check("a sibling blocker is named instead of an instruction that would do nothing", Eject.sentence("mounted", "second", ["first"]).text, "second could not be ejected because first on the same drive is still mounted. Eject that instead.")
@@ -285,15 +330,44 @@ function run(check) {
     check("a killed gio never starts it", Devices.mountTimerStart(137), false)
 
     // Defect 9: a power-off unmounts every mounted volume on the disk before stopping it.
-    var vols = [{ kind: "volume", device: "/dev/sda1", path: "/run/media/u/a", mounted: true },
-                { kind: "volume", device: "/dev/sda2", path: "/run/media/u/b", mounted: true },
-                { kind: "volume", device: "/dev/sdb1", path: "/run/media/u/c", mounted: true },
-                { kind: "volume", device: "/dev/sda3", path: "", mounted: false }]
-    check("both mounted volumes on the disk queue", Devices.powerOffQueue(vols, "/dev/sda").join(","), "/dev/sda1,/dev/sda2")
-    check("the other disk queues nothing", Devices.powerOffQueue(vols, "/dev/sdb").join(","), "/dev/sdb1")
-    check("no entries queue nothing", Devices.powerOffQueue(null, "/dev/sda").join(","), "")
-    check("a mountpoint comes from the last listing", Devices.mountpointOf(vols, "/dev/sda2"), "/run/media/u/b")
-    check("an unlisted device has no mountpoint", Devices.mountpointOf(vols, "/dev/sdz9"), "")
+    var vols = JSON.stringify({ blockdevices: [
+        { name: "sda", path: "/dev/sda", mountpoints: [null], type: "disk", children: [
+            { name: "sda1", path: "/dev/sda1", label: "EFI", mountpoints: ["/run/media/u/EFI"], fstype: "vfat", type: "part", parttype: "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" },
+            { name: "sda2", path: "/dev/sda2", label: "DATA", mountpoints: ["/run/media/u/DATA"], fstype: "hfsplus", type: "part" },
+            { name: "sda3", path: "/dev/sda3", label: null, mountpoints: [null], fstype: "vfat", type: "part" },
+            { name: "sda4", path: "/dev/sda4", label: null, mountpoints: ["/boot"], fstype: "vfat", type: "part" } ] },
+        { name: "sdb", path: "/dev/sdb", mountpoints: ["/run/media/u/c"], type: "disk" }] })
+    check("both mounted volumes on the disk queue, the hidden ESP too", powerQueue(vols, "/dev/sda").map(function (q) { return q.device }).join(","), "/dev/sda1,/dev/sda2")
+    check("a queued leg carries its mountpoint from the listing", powerQueue(vols, "/dev/sda")[1].path, "/run/media/u/DATA")
+    check("the other disk queues only its own", powerQueue(vols, "/dev/sdb").map(function (q) { return q.device }).join(","), "/dev/sdb")
+    check("no listing queues nothing", powerQueue(null, "/dev/sda").length, 0)
+    var railVols = [
+        { kind: "volume", device: "/dev/sda1", path: "/run/media/u/a", mounted: true },
+        { kind: "volume", device: "/dev/sda2", path: "/run/media/u/b", mounted: true },
+        { kind: "volume", device: "/dev/sdb1", path: "/run/media/u/c", mounted: true },
+        { kind: "volume", device: "/dev/sda3", path: "", mounted: false },
+        { kind: "disk", device: "/dev/sda", path: "/", mounted: true } ]
+    var railQueue = JSON.stringify([
+        { device: "/dev/sda1", path: "/run/media/u/a" },
+        { device: "/dev/sda2", path: "/run/media/u/b" } ])
+    check("an unparsable listing falls back to mounted rail volumes on this disk",
+          JSON.stringify(powerQueue("not json", "/dev/sda", railVols)), railQueue)
+    check("a truncated listing keeps the same rail fallback",
+          JSON.stringify(powerQueue(vols.slice(0, -1), "/dev/sda", railVols)), railQueue)
+    check("an empty listing keeps the same rail fallback",
+          JSON.stringify(powerQueue(null, "/dev/sda", railVols)), railQueue)
+    check("a valid listing keeps hidden nodes and its own mountpoints instead of the fallback",
+          powerQueue(vols, "/dev/sda", railVols)[0].path, "/run/media/u/EFI")
+    var shared = { name: "dm-0", path: "/dev/mapper/vg-data", mountpoints: ["/mnt/data"], type: "lvm", uuid: "shared" }
+    var mapped = JSON.stringify({ blockdevices: [
+        { name: "sdc", path: "/dev/sdc", mountpoints: [null], type: "disk", children: [
+            { name: "sdc1", path: "/dev/sdc1", mountpoints: [null], type: "part", children: [shared] },
+            { name: "sdc2", path: "/dev/sdc2", mountpoints: [null], type: "part", children: [shared,
+                { name: "dm-1", path: "/dev/mapper/vg-other", mountpoints: ["/mnt/other"], type: "lvm", uuid: "shared" } ] } ] } ] })
+    check("a dm node repeated under two partitions queues once, distinct device paths both stay",
+          JSON.stringify(powerQueue(mapped, "/dev/sdc")), JSON.stringify([
+              { device: "/dev/mapper/vg-data", path: "/mnt/data" },
+              { device: "/dev/mapper/vg-other", path: "/mnt/other" } ]))
     // The eject chain watches the disk's write counter, so a flushing leg restarts its deadline.
     check("a disk path answers its sysfs block name", Devices.sysBase("/dev/sda"), "sda")
     check("an nvme disk answers whole", Devices.sysBase("/dev/nvme0n1"), "nvme0n1")

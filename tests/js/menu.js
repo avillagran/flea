@@ -1,6 +1,7 @@
 .import "menuhunt.js" as MenuHunt
 .import "../../ui/js/Menu.js" as Menu
 .import "../../ui/js/MenuRefresh.js" as MenuRefresh
+.import "../../ui/js/MenuContext.js" as MenuContext
 .import "../../ui/js/LockedMenu.js" as LockedMenu
 .import "../../ui/js/StateWords.js" as StateWords
 .import "../../ui/js/Nav.js" as Nav
@@ -27,18 +28,22 @@ function separated(rows) {
 }
 function run(check) {
     var file = Menu.listingEntries(state({}))
-    check("Menus and Places inventory has 55 actions", Menu.INVENTORY.length, 55)
+    check("Menus and Places inventory has 57 actions", Menu.INVENTORY.length, 57)
     check("Open with uses the authoritative cut geometry", Icons.pathFor("app-window"), "M3 4h18v16H3z M3 9h18 M6 6.5h.01 M9 6.5h.01")
     check("Restore all uses the authoritative undo geometry", Icons.pathFor("undo"), "M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8 M3 3v5h5")
-    check("inventory storage ids are unique", Object.keys(Menu.INVENTORY.reduce(function (out, row) { out[row[0]] = true; return out }, {})).length, 55)
+    check("inventory storage ids are unique", Object.keys(Menu.INVENTORY.reduce(function (out, row) { out[row[0]] = true; return out }, {})).length, 57)
     check("default image menu matches Menus specimen", actions(file),
-          "open,openWith,run,openAsText,cut,copy,paste,duplicate,rename,compress,convert,flashDrive,addToShelf,taildrop,dropbox,trash,addFavourite,toggleHidden")
+          "open,openWith,run,openAsText,cut,copy,paste,duplicate,rename,compress,convert,flashDrive,addToShelf,taildrop,dropbox,trash,addFavourite,toggleHidden,toggleLangMarks")
+    check("code icons ship enabled with the existing code glyph", entry(file, "toggleLangMarks").label + "|" + entry(file, "toggleLangMarks").glyph, "Hide code icons|code")
+    check("code icons flip their verb live", entry(Menu.listingEntries(state({langMarks: false})), "toggleLangMarks").label, "Show code icons")
+    check("Settings can hide the code-icons row", entry(Menu.listingEntries(state({hiddenActions: ["toggleLangMarks"]})), "toggleLangMarks").action, undefined)
+    check("the code-icons row follows Show hidden files", file.findIndex(function (r) { return r.action === "toggleLangMarks" }), file.findIndex(function (r) { return r.action === "toggleHidden" }) + 1)
     check("empty clipboard keeps Paste disabled", entry(file, "paste").disabled, true)
     check("populated clipboard enables Paste", entry(Menu.listingEntries(state({ clipboardAvailable: true })), "paste").disabled, false)
     check("folder omits run and open as text; Pane gives a folder no image or archive flag, so no conversion or extraction", actions(Menu.listingEntries(state({ rowMode: 0o040755, rowIsImage: false, rowName: "Photos" }))),
-          "open,openWith,cut,copy,paste,duplicate,rename,compress,addToShelf,taildrop,dropbox,trash,addFavourite,toggleHidden")
+          "open,openWith,cut,copy,paste,duplicate,rename,compress,addToShelf,taildrop,dropbox,trash,addFavourite,toggleHidden,toggleLangMarks")
     check("background menu includes real creation actions in order", actions(Menu.listingEntries(state({ hasRow: false }))),
-          "newFolder,newFile,paste,selectAll,openTerminal,addFavourite,sort,toggleHidden,settings")
+          "newFolder,newFile,paste,selectAll,openTerminal,addFavourite,sort,toggleHidden,toggleLangMarks,settings")
     var background = Menu.listingEntries(state({ hasRow: false, updateVersion: "0.3.4" }))
     check("a known newer build adds Update Flea under Settings, in the same group, with the download mark",
           background.slice(-2).map(function (r) { return (r.separator ? "|" : r.action) + ":" + r.glyph }).join(","),
@@ -451,6 +456,78 @@ function providerRefresh(check) {
             localSend: { installed: false, peers: [], checking: false, answeredOnce: false },
             storageClass: "", hasFolderSort: false }
     }
+    // Sample input: a cold host keeps peer box and /fixture/Dropbox while its providers refresh.
+    var cold = flashContextRoot()
+    cold.item = null
+    cold.taildropInstalled = true
+    cold.taildropPeers = [{ id: "box", label: "Box" }]
+    cold.dropboxInstalled = true
+    cold.dropboxPath = "/fixture/Dropbox"
+    cold.lastProviderAnswer = MenuContext.settle(MenuContext.live(cold))
+    check("cold settle retains installed peers", cold.lastProviderAnswer.taildrop.peers[0].id, "box")
+    check("cold settle retains the Dropbox answer", cold.lastProviderAnswer.dropbox.path, "/fixture/Dropbox")
+    cold.providersRefreshing = true
+    cold.taildropPeers = []
+    cold.dropboxPath = ""
+    cold.localSend = { installed: true, peers: [], checking: true, answeredOnce: false }
+    var coldEnvironment = { scripts: [{ id: "build.sh", label: "Build" }], hiddenActions: ["copy", "trash", "copyAs"],
+        thumbPreview: true, updateVersion: "0.3.12" }
+    cold.listingContext = function (flyout, include) { return MenuContext.listingContext(cold, flyout, include, coldEnvironment) }
+    var coldContext = cold.listingContext("copyAs", false)
+    check("cold listing keeps the settled peers during refresh", coldContext.taildropPeers[0].id, "box")
+    check("cold listing keeps the settled Dropbox path during refresh", coldContext.dropboxPath, "/fixture/Dropbox")
+    check("cold listing hides other actions but keeps its requested flyout", coldContext.hiddenActions.join(","), "copy,trash")
+    check("cold listing leaves stored hidden actions intact", coldEnvironment.hiddenActions.join(","), "copy,trash,copyAs")
+    check("cold listing passes scripts from its environment", coldContext.scripts === coldEnvironment.scripts, true)
+    check("cold listing passes preview and update state", coldContext.thumbPreview + "|" + coldContext.updateVersion, "true|0.3.12")
+    check("cold listing reports the first LocalSend check", coldContext.localSendChecking, true)
+    cold.localSend.answeredOnce = true
+    check("cold listing does not draw a later LocalSend check", cold.listingContext().localSendChecking, false)
+    check("cold sheet listing includes hidden actions", cold.listingContext("", true).hiddenActions.length, 0)
+    cold.rowIsFile = false
+    check("cold folder listing suppresses file-only peers", cold.listingContext().taildropPeers.length, 0)
+    cold.rowIsFile = true
+    cold.taildropInstalled = false
+    check("cold listing drops a settled answer when installation changes", cold.listingContext().taildropPeers.length, 0)
+    // Sample input: no visual, identity a, hidden copy; sheet validation allows it and ordinary validation refuses it.
+    var hostSource = Source.source("ui/MenuHost.qml")
+    var coldBuild = eval("(function (root, ViewState, flyoutAction, includeHidden) {" + functionBody(hostSource, "function buildEntries(") + "})")
+    var coldBuildArgs = [], coldRefusals = [], coldIdentity = "a"
+    cold.forRail = false
+    cold.forHeader = false
+    cold.railEntries = []
+    cold.openedIdentity = "a"
+    cold.selectionIdentity = function () { return coldIdentity }
+    cold.buildEntries = function (flyout, include) {
+        coldBuildArgs.push({ flyout: flyout, include: include, preparing: cold.preparing })
+        return coldBuild(cold, { hiddenCols: ["size"] }, flyout, include)
+    }
+    cold.refuseLone = function (kind) { coldRefusals.push(kind) }
+    check("cold sheet validation allows its hidden copy row", MenuContext.validateChoice(cold, "copy", "", true), true)
+    check("cold validation builds while preparing", coldBuildArgs[0].preparing, true)
+    check("cold validation forwards includeHidden", coldBuildArgs[0].include, true)
+    check("cold validation clears preparing", cold.preparing, false)
+    check("cold ordinary validation refuses a hidden row", MenuContext.validateChoice(cold, "copy", "", false), false)
+    check("cold hidden-row refusal names unavailable", coldRefusals.pop(), "unavailable")
+    check("cold flyout validation allows a known leaf", MenuContext.validateChoice(cold, "copyAs", "copyPath"), true)
+    check("cold flyout validation asks for its parent action", coldBuildArgs[coldBuildArgs.length - 1].flyout, "copyAs")
+    check("cold validation refuses an unknown leaf", MenuContext.validateChoice(cold, "copyAs", "missing"), false)
+    check("cold unknown-leaf refusal names unavailable", coldRefusals.pop(), "unavailable")
+    check("cold validation refuses disabled Paste", MenuContext.validateChoice(cold, "paste", "", true), false)
+    check("cold disabled-row refusal names unavailable", coldRefusals.pop(), "unavailable")
+    coldIdentity = "b"
+    check("cold validation refuses a moved selection", MenuContext.validateChoice(cold, "copy", "", true), false)
+    check("cold moved-selection refusal names moved", coldRefusals.pop(), "moved")
+    // Sample input: a cold header with size hidden offers Show Size; a cold rail keeps its own Rename row.
+    cold.forHeader = true
+    check("cold header uses its hidden-column state", entry(cold.buildEntries(), "col:size").label, "Show Size")
+    check("cold header validation ignores row identity", MenuContext.validateChoice(cold, "col:size", ""), true)
+    cold.forHeader = false
+    cold.forRail = true
+    cold.railEntries = [{ action: "rename", label: "Rename" }]
+    check("cold rail uses its supplied entries", cold.buildEntries() === cold.railEntries, true)
+    check("cold rail validation ignores row identity", MenuContext.validateChoice(cold, "rename", ""), true)
+    check("cold helper calls leave the visual absent", cold.item, null)
     var flashFlea = { Scripts: { entries: [] } }
     var flashViewState = { menuHidden: ["delete", "openTerminal", "moveto", "copyto", "properties",
         "permissions", "copyAs", "pasteAs", "invertSelection"], preview: true }

@@ -15,6 +15,8 @@ import "columns.js" as ColumnsSuite
 import "columnskeep.js" as ColumnsKeepSuite
 import "columnsback.js" as ColumnsBackSuite
 import "watchgate.js" as WatchGateSuite
+import "codelines.js" as CodeLinesSuite
+import "csv.js" as CsvSuite
 import "contrast.js" as ContrastSuite
 import "copyas.js" as CopyAsSuite
 import "invert.js" as InvertSuite
@@ -29,6 +31,7 @@ import "dropsflow.js" as DropsFlowSuite
 import "dst.js" as DstSuite
 import "errors.js" as ErrorsSuite
 import "facts.js" as FactsSuite
+import "fontfacts.js" as FontFactsSuite
 import "figureservice.js" as FigureServiceSuite
 import "filter.js" as FilterSuite
 import "filter-cursor.js" as FilterCursorSuite
@@ -50,6 +53,7 @@ import "icons.js" as IconsSuite
 import "jump.js" as JumpSuite
 import "jump-heldout.js" as JumpHeldoutSuite
 import "keymap.js" as KeymapSuite
+import "langmarks.js" as LangmarksSuite
 import "keyreach.js" as KeyReachSuite
 import "localsend.js" as LocalSendSuite
 import "markdown.js" as MarkdownSuite
@@ -81,6 +85,7 @@ import "properties.js" as PropertiesSuite
 import "propertyfacts.js" as PropertyFactsSuite
 import "openwith.js" as OpenWithSuite
 import "devices.js" as DevicesSuite
+import "loopdevices.js" as LoopDevicesSuite
 import "mounts.js" as MountsSuite
 import "names.js" as NamesSuite
 import "nav.js" as NavSuite
@@ -96,6 +101,8 @@ import "phones.js" as PhonesSuite
 import "picker.js" as PickerSuite
 import "pickerpath.js" as PickerPathSuite
 import "previewkeys.js" as PreviewKeysSuite
+import "compare.js" as CompareSuite
+import "sequences.js" as SequencesSuite
 import "previewask.js" as PreviewAskSuite
 import "places.js" as PlacesSuite
 import "rail.js" as RailSuite
@@ -135,6 +142,7 @@ import "transfer.js" as TransferSuite
 import "sort.js" as SortSuite
 import "swap.js" as SwapSuite
 import "previewswap.js" as PreviewSwapSuite
+import "quicklookrect.js" as QuickLookRectSuite
 import "startup.js" as StartupSuite
 import "status.js" as StatusSuite
 import "statusfix.js" as StatusFixSuite
@@ -145,6 +153,7 @@ import "tags.js" as TagsSuite
 import "tagskeys.js" as TagsKeysSuite
 import "textsize.js" as TextSizeSuite
 import "trash.js" as TrashSuite
+import "trashdrop.js" as TrashDropSuite
 import "tap.js" as TapSuite
 import "marquee.js" as MarqueeSuite
 import "tabs.js" as TabsSuite
@@ -180,11 +189,11 @@ Item {
 
         var suites = [
             ["clipboard", ClipboardSuite],
-            ["archive", ArchiveSuite], ["archives", ArchivesSuite], ["archivecards", ArchiveCardsSuite], ["background", BackgroundSuite], ["buttons", ButtonsSuite], ["cardink", CardInkSuite], ["bulkrename", BulkRenameSuite], ["bulksheet", BulkSheetSuite], ["collide", CollideSuite], ["collidemerge", CollideMergeSuite], ["clipmarks", ClipMarksSuite], ["columns", ColumnsSuite], ["columnskeep", ColumnsKeepSuite], ["columnsback", ColumnsBackSuite], ["watchgate", WatchGateSuite], ["contrast", ContrastSuite],
+            ["archive", ArchiveSuite], ["archives", ArchivesSuite], ["archivecards", ArchiveCardsSuite], ["background", BackgroundSuite], ["buttons", ButtonsSuite], ["cardink", CardInkSuite], ["bulkrename", BulkRenameSuite], ["bulksheet", BulkSheetSuite], ["collide", CollideSuite], ["collidemerge", CollideMergeSuite], ["clipmarks", ClipMarksSuite], ["columns", ColumnsSuite], ["columnskeep", ColumnsKeepSuite], ["columnsback", ColumnsBackSuite], ["watchgate", WatchGateSuite], ["contrast", ContrastSuite], ["codelines", CodeLinesSuite], ["csv", CsvSuite],
             ["dirsizes", DirSizesSuite], ["drag", DragSuite], ["dragout", DragOutSuite], ["dropkeys", DropKeysSuite], ["drops", DropsSuite], ["dropsflow", DropsFlowSuite], ["dst", DstSuite], ["ddtarget", DdtargetSuite],
             ["copyas", CopyAsSuite], ["invert", InvertSuite],
             ["edmonton", DstSuite],
-            ["errors", ErrorsSuite], ["facts", FactsSuite], ["figureservice", FigureServiceSuite], ["filter", FilterSuite], ["filter-cursor", FilterCursorSuite],
+            ["errors", ErrorsSuite], ["facts", FactsSuite], ["fontfacts", FontFactsSuite], ["figureservice", FigureServiceSuite], ["filter", FilterSuite], ["filter-cursor", FilterCursorSuite],
             ["focus", FocusSuite], ["focus-grid", FocusGridSuite], ["focus-forward", FocusForwardSuite],
             ["flash", FlashSuite], ["flashpane", FlashPaneSuite], ["framegap", FramegapSuite],
             ["foldersorts", FolderSortsSuite],
@@ -192,14 +201,14 @@ Item {
             ["gridgeometry", GridGeometrySuite], ["density", DensitySuite],
             ["focus-lines", FocusLinesSuite], ["focus-wrap", FocusWrapSuite],
             ["fill", FillSuite], ["format", FormatSuite], ["icons", IconsSuite],
-            ["jump", JumpSuite], ["jump-heldout", JumpHeldoutSuite], ["keymap", KeymapSuite], ["keyreach", KeyReachSuite], ["localsend", LocalSendSuite], ["listbudget", ListBudgetSuite], ["match", MatchSuite], ["menu", MenuSuite], ["properties", PropertiesSuite], ["propertyfacts", PropertyFactsSuite], ["xwnewfile", XwNewFileSuite],
-            ["marks", MarksSuite], ["markdown", MarkdownSuite], ["mdstructure", MdStructureSuite], ["mdlineends", MdLineEndsSuite], ["mdliteral", MdLiteralSuite], ["mdspecfix", MdSpecFixSuite], ["mddraw", MdDrawSuite], ["mdnest", MdNestSuite], ["mdhtml", MdHtmlSuite], ["mdhtmlgh", MdHtmlGhSuite], ["mdhead", MdHeadSuite], ["mdhtmlrow", MdHtmlRowSuite], ["mdr7", MdR7Suite], ["mdround4", MdRound4Suite], ["mdprogress", MdProgressSuite], ["mdslice", MdSliceSuite], ["markdownpictures", MarkdownPicturesSuite], ["mounts", MountsSuite], ["motion", MotionSuite], ["names", NamesSuite], ["nav", NavSuite], ["navnewest", NavNewestSuite], ["cursorreturn", CursorReturnSuite], ["crumbs", CrumbsSuite], ["devices", DevicesSuite], ["network", NetworkSuite], ["navmouse", NavMouseSuite], ["mdtable", MdTableSuite],
+            ["jump", JumpSuite], ["jump-heldout", JumpHeldoutSuite], ["keymap", KeymapSuite], ["langmarks", LangmarksSuite], ["keyreach", KeyReachSuite], ["localsend", LocalSendSuite], ["listbudget", ListBudgetSuite], ["match", MatchSuite], ["menu", MenuSuite], ["properties", PropertiesSuite], ["propertyfacts", PropertyFactsSuite], ["xwnewfile", XwNewFileSuite],
+            ["marks", MarksSuite], ["markdown", MarkdownSuite], ["mdstructure", MdStructureSuite], ["mdlineends", MdLineEndsSuite], ["mdliteral", MdLiteralSuite], ["mdspecfix", MdSpecFixSuite], ["mddraw", MdDrawSuite], ["mdnest", MdNestSuite], ["mdhtml", MdHtmlSuite], ["mdhtmlgh", MdHtmlGhSuite], ["mdhead", MdHeadSuite], ["mdhtmlrow", MdHtmlRowSuite], ["mdr7", MdR7Suite], ["mdround4", MdRound4Suite], ["mdprogress", MdProgressSuite], ["mdslice", MdSliceSuite], ["markdownpictures", MarkdownPicturesSuite], ["mounts", MountsSuite], ["motion", MotionSuite], ["names", NamesSuite], ["nav", NavSuite], ["navnewest", NavNewestSuite], ["cursorreturn", CursorReturnSuite], ["crumbs", CrumbsSuite], ["devices", DevicesSuite], ["loopdevices", LoopDevicesSuite], ["network", NetworkSuite], ["navmouse", NavMouseSuite], ["mdtable", MdTableSuite],
             ["openwith", OpenWithSuite], ["ops", OpsSuite], ["opstrash", OpsTrashSuite],
             ["palette", PaletteSuite], ["pathbar", PathBarSuite], ["places", PlacesSuite], ["placemenu", PlaceMenuSuite], ["rail", RailSuite], ["fsslot", FsSlotSuite], ["scripts", ScriptsSuite],
             ["phones", PhonesSuite],
             ["picker", PickerSuite],
             ["pickerpath", PickerPathSuite],
-            ["previewkeys", PreviewKeysSuite], ["previewask", PreviewAskSuite], ["mdprepared", MdPreparedSuite], ["previewswap", PreviewSwapSuite],
+            ["previewkeys", PreviewKeysSuite], ["compare", CompareSuite], ["sequences", SequencesSuite], ["previewask", PreviewAskSuite], ["mdprepared", MdPreparedSuite], ["previewswap", PreviewSwapSuite], ["quicklookrect", QuickLookRectSuite],
             ["protocols", ProtocolsSuite], ["railentries", RailEntriesSuite], ["railkeys", RailKeysSuite],
             ["recent", RecentSuite],
             ["recentmode", RecentModeSuite],
@@ -209,7 +218,7 @@ Item {
             ["scroll", ScrollSuite], ["scrollanchor", ScrollAnchorSuite], ["scrolloff", ScrollOffSuite], ["menuscroll", MenuScrollSuite], ["search", SearchSuite], ["searchnoblank", SearchNoBlankSuite],
             ["selection", SelectionSuite], ["shiftranges", ShiftRangesSuite], ["sheetquery", SheetQuerySuite], ["sheetcandidates", SheetCandidatesSuite], ["reload", ReloadSuite], ["slowclick", SlowClickSuite], ["slowop", SlowOpSuite], ["slowsource", SlowSourceSuite], ["settings", SettingsSuite], ["settingsmenus", SettingsMenusSuite], ["settingsshelf", SettingsShelfSuite], ["settingsabout", SettingsAboutSuite],
             ["sort", SortSuite], ["swap", SwapSuite], ["startup", StartupSuite], ["trashdates", TrashDatesSuite], ["permissions", PermissionsSuite], ["status", StatusSuite], ["statusfix", StatusFixSuite], ["taildrop", TaildropSuite], ["tags", TagsSuite], ["tagskeys", TagsKeysSuite], ["textsize", TextSizeSuite],
-            ["trash", TrashSuite], ["tap", TapSuite], ["marquee", MarqueeSuite], ["tabs", TabsSuite], ["tabcatcher", TabCatcherSuite], ["tabs-switch", TabsSwitchSuite], ["tabmove", TabMoveSuite], ["tabrestore", TabRestoreSuite], ["shelfmodel", ShelfModelSuite],
+            ["trash", TrashSuite], ["trashdrop", TrashDropSuite], ["tap", TapSuite], ["marquee", MarqueeSuite], ["tabs", TabsSuite], ["tabcatcher", TabCatcherSuite], ["tabs-switch", TabsSwitchSuite], ["tabmove", TabMoveSuite], ["tabrestore", TabRestoreSuite], ["shelfmodel", ShelfModelSuite],
             ["mdgates", MdGatesSuite],
             ["themes", ThemesSuite], ["thumbs", ThumbsSuite], ["extthumbs", ExtThumbsSuite], ["transfer", TransferSuite], ["uistate", UiStateSuite], ["unlock", UnlockSuite], ["update", UpdateSuite],
             ["watch", WatchSuite], ["xwwatch", XwWatchSuite], ["xwanchor-races", XwAnchorRacesSuite], ["renameview", RenameViewSuite], ["xwrl4", Xwrl4Suite], ["gvfsbridge", GvfsBridgeSuite]
@@ -223,7 +232,7 @@ Item {
                 if (argv[suiteIndex] === "--") {
                     suiteIndex += 1
                 }
-                if (suiteIndex < argv.length) {
+                if (suiteIndex < argv.length && argv[suiteIndex].indexOf("--qt-version=") !== 0) {
                     only = argv[suiteIndex]
                     hasOnly = true
                 }

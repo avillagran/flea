@@ -24,7 +24,12 @@ ShellRoot {
         running: true
         onTriggered: {
             if (++root.ticks > 350) { root.check(false, "format timed out " + cases[root.index] + " status=" + preview.status); root.finish(); return }
-            if (root.phase === 0) { preview.show(cases[root.index], "font-x-generic", 0, "Font", "", -1); root.phase = 1; return }
+            if (root.phase === 0) {
+                preview.show(cases[root.index], "font-x-generic", 0, "Font", "", -1)
+                if (!preview.advancedFont) preview.fontManageControl.activated()
+                root.phase = 1
+                return
+            }
             var item = preview.fontItem
             if (!item || item.busy || preview.status === "loading") return
             root.check(preview.status === "font", "Qt rendered " + cases[root.index] + " status=" + preview.status)

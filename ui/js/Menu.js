@@ -1,5 +1,6 @@
 .pragma library
 
+.import "Lists.js" as Lists
 .import "Archive.js" as Archive
 .import "ExtThumbs.js" as ExtThumbs
 .import "Format.js" as Format
@@ -96,11 +97,14 @@ var INVENTORY = [
     // MenuAdditions rule 2: after Copy as, one row per executable in ~/.config/flea/scripts, and
     // absent rather than greyed when that directory is missing or holds none.
     ["runScript", "Run script", "terminal", "F", "inspect"],
+    // MenuAdditions040 specimen e: Compare sits before Add to Favorites, with no key, and is absent unless two regular files are marked.
+    ["compare", "Compare", "columns", "F", "inspect"],
     ["addFavourite", "Add to Favorites", "star", "FBP", "inspect"],
     ["tags", "Tags", "tag", "F", "inspect"],
     ["removeFavourite", "Remove from Favorites", "minus", "PR", "inspect"],
     ["sort", "Sort by", "sort", "B", "view"],
     ["toggleHidden", "Show hidden files", "eye", "FB", "view"],
+    ["toggleLangMarks", "Show code icons", "code", "FB", "view"],
     ["extThumbs", "Show thumbnails", "image", "B", "view"],
     ["settings", "Settings", "sliders", "B", "settings"],
     ["updateFlea", "Update Flea", "download", "B", "settings"],
@@ -182,6 +186,8 @@ function availableEntry(e, p, kind) {
     }
     // Only a cursor-row script without any execute bit qualifies; its two-byte probe runs once at menu open.
     if (e.action === "makeExecutable" && !canMakeExecutable(p.rowMode, count, p.hasShebang, p.cursorIsTarget)) return false
+    // The held rows or menu snapshot supply every selected item's own kind.
+    if (e.action === "compare" && !canCompare(p.compareKinds)) return false
     if (e.action === "runScript") {
         if (!(p.scripts || []).length) return false
         e.submenu = p.scripts.map(function (script) { return { id: script.id, label: script.label } })
@@ -255,6 +261,11 @@ function availableEntry(e, p, kind) {
         e.label = hidden.label
         e.glyph = hidden.glyph
     }
+    if (e.action === "toggleLangMarks") {
+        var code = codeIconsRow(p.langMarks)
+        e.label = code.label
+        e.glyph = code.glyph
+    }
     // The class switch ships hidden; switched on, it is present only on network,
     // phone or USB storage and reads Show while that class is off, Hide while on.
     if (e.action === "extThumbs") return ExtThumbs.entry(e, p)
@@ -278,7 +289,7 @@ function availableRail(e, entry) {
     case "unmountVolume": return volume && mounted
     case "unmountPhone": return phone && mounted
     case "unmount": return share && mounted
-    case "eject": return volume && mounted && entry.removable === true
+    case "eject": return volume && mounted && (entry.removable === true || entry.loop === true)
     // Flash image shows on a writable removable drive, mounted or not, never on an open crypt, whose mapper names no drive.
     case "flashImage": return volume && entry.removable === true && entry.readOnly !== true && !/^\/dev\/(mapper\/|dm-)/.test(entry.device || "")
     case "rename": return share && entry.editable !== false
@@ -324,6 +335,13 @@ function canMakeExecutable(mode, count, hasShebang, cursorIsTarget) {
     var bits = Number(mode) || 0
     if ((bits & Format.S_IFMT) !== Format.S_IFREG) return false
     return (bits & Format.ANY_EXECUTE_BIT) === 0
+}
+
+// Exactly two marked regular files; kinds holds each item's own type bits, so links stay links.
+// Sample input: [0o100000, 0o100000] is true; [0o100000, 0o040000], [0o100000] and a link left at 0o120000 are false.
+function canCompare(kinds) {
+    if (!Lists.isList(kinds) || kinds.length !== 2) return false
+    return kinds.every(function (kind) { return ((Number(kind) || 0) & Format.S_IFMT) === Format.S_IFREG })
 }
 
 // The Copy as flyout: six leaves in board order, letters on keyHint.
@@ -445,14 +463,18 @@ function isHidden(hiddenActions, action) {
     return false
 }
 
-// The one state toggle either menu draws. The label flips with the state, the house pattern
-// (ui/MenuRow.qml draws no checkmark), and the verb is the key's own.
+// Hidden-files labels and glyphs flip with state; MenuRow draws no checkmark.
 function hiddenRow(showHidden) {
     return {
         label: showHidden ? "Hide hidden files" : "Show hidden files",
         action: "toggleHidden",
         glyph: showHidden ? "eye-off" : "eye"
     }
+}
+
+// Code icons use the hidden-files row's label flip and the existing code glyph.
+function codeIconsRow(langMarks) {
+    return { label: langMarks !== false ? "Hide code icons" : "Show code icons", action: "toggleLangMarks", glyph: "code" }
 }
 
 // ui/Header.qml's own rows, on a right click over the column titles. Name is not among them: it is

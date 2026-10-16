@@ -321,12 +321,18 @@ function runPdfIdle(check) {
         openAt >= 0 && pdf.indexOf("function requestOpen()") >= 0
         && pdf.indexOf("function openPending()", openAt + 1) < 0, true)
     var ask = squashed(bodyOf(pdf, "function requestOpen"))
-    check("the fast path decides on idleness and a live render",
-        ask.indexOf("PreviewSettle.pdfOpenNow(") >= 0 && ask.indexOf("Image.Loading") >= 0, true)
+    var busy = squashed(bodyOf(pdf, "function renderBusy"))
+    check("the fast path decides on idleness and a live render, of the one page or of any page of the stack",
+        ask.indexOf("PreviewSettle.pdfOpenNow(") >= 0 && ask.indexOf("root.renderBusy()") >= 0
+        && busy.indexOf("root.pageItem.status === Image.Loading") >= 0
+        && busy.indexOf("pages.itemAt(i)") >= 0 && busy.indexOf(".rendering) return true") >= 0, true)
+    check("the first frame never waits on a page whose render failed",
+        squashed(bodyOf(pdf, "function firstDrawn")).indexOf("!slot.settled") >= 0
+        && squashed(pdf).indexOf("readonly property bool settled: slot.landed || slot.errored") >= 0, true)
     check("the fast path waits for the next presented frame, never the end of the turn",
         ask.indexOf("Qt.callLater") < 0 && ask.indexOf("root.fastArmed = PreviewSettle.pdfOpenNow(") >= 0, true)
     check("a newer request cancels the deferred open",
-        ask.indexOf("var now = Date.now() root.fastArmed = PreviewSettle.pdfOpenNow(now, root.lastRequestAt, root.settleMs, page.status === Image.Loading) root.lastRequestAt = now") >= 0, true)
+        ask.indexOf("var now = Date.now() root.fastArmed = PreviewSettle.pdfOpenNow(now, root.lastRequestAt, root.settleMs, root.renderBusy()) root.lastRequestAt = now") >= 0, true)
     check("the settle stays as the backstop on the idle path",
         ask.indexOf("pdfSettle.restart()") >= 0, true)
     var fast = squashed(bodyOf(pdf, "function runFast"))
@@ -437,7 +443,7 @@ function runE81(check) {
         && clear.indexOf("Thumbs.allowed(row, ViewState.thumbnailMode)") >= 0
         && squashed(bodyOf(quick, "function thumbOwed")).indexOf("root.thumbClear(") >= 0, true)
     check("the interim takes the upright original's rect, never the cache pixels",
-        flat.indexOf("PreviewSwap.interimRect(panes.width, panes.height,") >= 0
+        flat.indexOf("PreviewSwap.interimRect(panes.width, panes.height - (root.isRawFile ? Theme.chromeHeight : 0),") >= 0
         && flat.indexOf("root.interimBox !== null ? root.interimBox.x : 0") >= 0
         && quick.indexOf("thumbLimit(interimPicture") < 0, true)
     var askArm = squashed(bodyOf(quick, "function askImage"))
@@ -445,7 +451,7 @@ function runE81(check) {
         askArm.indexOf("root.imageAsked") >= 0 && askArm.indexOf("followSettle.running") >= 0
         && askArm.indexOf("root.pane.backend.askMeta(root.imageRow, false, false, false)") >= 0, true)
     check("a reply for another row is dropped",
-        flat.indexOf("if (root.isImage && row === root.imageRow && root.imageRowShown())") >= 0, true)
+        flat.indexOf("if (root.isImage && !root.isRawFile && row === root.imageRow && root.imageRowShown())") >= 0, true)
     check("the ask re-resolves a drifted index to the shown file",
         askArm.indexOf("root.resolveImageRow()") >= 0
         && squashed(bodyOf(quick, "function resolveImageRow")).indexOf("root.namedRow(at, root.path) !== null ? at : -1") >= 0, true)

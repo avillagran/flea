@@ -113,6 +113,9 @@ suite_undo="$run_root/undo-journal"
 mkdir -p "$suite_undo" || fail "the suite undo dir could not be created at $suite_undo"
 chmod 0700 "$suite_undo" || fail "the suite undo dir could not be locked down"
 export FLEA_UNDO_DIR="$suite_undo"
+# The tree's MPRIS helper, so a media case never looks for a /usr/lib/flea copy an older install lacks.
+export FLEA_MPRIS="${FLEA_MPRIS:-$repo/tools/flea-mpris}"
+[ -x "$FLEA_MPRIS" ] || fail "the MPRIS helper is not an executable at $FLEA_MPRIS"
 
 # Ten bursts of twelve clicks moved the 100k viewport about eleven rows when measured.
 scroll_bursts=10
@@ -246,7 +249,13 @@ flea_process_owned() {
         sleep 0.05
     done
     (( read )) || return 3
-    grep -Fx "FLEA_TEST_RUN_ROOT=$run_root" <<< "$environment" >/dev/null
+    grep -Fx "FLEA_TEST_RUN_ROOT=$run_root" <<< "$environment" >/dev/null && return 0
+    # A readable environ can become empty at exit, so missing ownership still needs an exit check.
+    [[ -d "$process" ]] || return 2
+    # Sample /proc/PID/stat: "347 (gio) Z 1 347 ...", so the state follows the closing parenthesis.
+    [[ "$(sed 's/.*) //' "$process/stat" 2>/dev/null | cut -d' ' -f1)" == Z ]] && return 2
+    [[ -d "$process" ]] || return 2
+    return 1
 }
 
 # Any Flea from this checkout that we did not start, captured once before anything is killed. The
@@ -3495,9 +3504,9 @@ case_background() {
     [[ "$(ipc contextMenuVisible)" == "true" ]] \
         || fail "background: a right click on empty space opened no menu"
     # Menus.html's background column: New folder and New file lead it, and Add to Favorites stays.
-    [[ "$(ipc contextMenuEntries)" == "New folder|New file|-|Paste|Select all|-|Open in terminal|Add to Favorites|-|Sort by|Show hidden files|-|Settings" ]] \
+    [[ "$(ipc contextMenuEntries)" == "New folder|New file|-|Paste|Select all|-|Open in terminal|Add to Favorites|-|Sort by|Show hidden files|Hide code icons|-|Settings" ]] \
         || fail "background: the menu is not the board's column, it is $(ipc contextMenuEntries)"
-    [[ "$(ipc contextMenuGlyphs)" == "folder-plus|file-plus|-|clipboard|check|-|terminal|star|-|sort|eye|-|sliders" ]] \
+    [[ "$(ipc contextMenuGlyphs)" == "folder-plus|file-plus|-|clipboard|check|-|terminal|star|-|sort|eye|code|-|sliders" ]] \
         || fail "background: a row lost its mark, the set is $(ipc contextMenuGlyphs)"
     # A right click ON a row still gets that row's own menu: the two entrances share one instance,
     # so a hasRow left standing from the last open would be the defect this asserts against.
@@ -3586,7 +3595,7 @@ case_background() {
     # The empty listing is also the strongest case for this menu, and it has no row to aim from.
     click_background
     settle
-    [[ "$(ipc contextMenuEntries)" == "New folder|New file|-|Paste|Select all|-|Open in terminal|Add to Favorites|-|Sort by|Show hidden files|-|Settings" ]] \
+    [[ "$(ipc contextMenuEntries)" == "New folder|New file|-|Paste|Select all|-|Open in terminal|Add to Favorites|-|Sort by|Show hidden files|Hide code icons|-|Settings" ]] \
         || fail "background: an empty directory drew $(ipc contextMenuEntries)"
     # Its own name: the empty-mark poll above already owns background-empty.png.
     shot background-empty-menu
@@ -3627,7 +3636,7 @@ case_background() {
         settle
         printf 'BACKGROUND %s entries=%s\n' "$view" "$(ipc contextMenuEntries)"
         shot "background-$view"
-        [[ "$(ipc contextMenuEntries)" == "New folder|New file|-|Paste|Select all|-|Open in terminal|Add to Favorites|-|Sort by|Show hidden files|-|Settings" ]] \
+        [[ "$(ipc contextMenuEntries)" == "New folder|New file|-|Paste|Select all|-|Open in terminal|Add to Favorites|-|Sort by|Show hidden files|Hide code icons|-|Settings" ]] \
             || fail "background: the $view view drew $(ipc contextMenuEntries)"
         key -k Escape >/dev/null
         settle
@@ -5081,8 +5090,8 @@ case_columns() {
     # and the error state had never met a real file anywhere in this suite. Each page is built in its
     # own parentheses: without them magick applies one -draw to the whole list and both pages come out
     # identical, measured on the built file before this was written.
-    magick \( -size 400x560 xc:white -fill black -draw "rectangle 40,40 120,80" \) \
-           \( -size 400x560 xc:white -fill black -draw "rectangle 40,40 360,520" \) \
+    magick \( -size 400x1200 xc:white -fill black -draw "rectangle 40,40 120,80" \) \
+           \( -size 400x1200 xc:white -fill black -draw "rectangle 40,40 360,520" \) \
            "$dir/manual.pdf"
     [[ -s "$dir/manual.pdf" ]] || fail "magick produced no manual.pdf"
     # A real header over a truncated body, so the document is unreadable rather than absent; poppler
@@ -5180,26 +5189,25 @@ case_columns() {
     (( page1_white > 2 * blank_white )) \
         || fail "columns: the pdf frame drew $page1_white near-white pixels against $blank_white with no document, so no page rendered"
 
-    centre=$(ipc columnChevronCentre right)
-    [[ -n "$centre" ]] || fail "columns: the pdf pager's right chevron has no on-screen centre"
-    read -r cx cy <<< "$centre"
-    read -r wx wy _ww _wh < <(window_box) || fail "native window coordinates unavailable"
-    omarchy-drive click "$((cx + wx))" "$((cy + wy))" >/dev/null
+    # The column's PDF has no pager: with the keyboard in the preview, l scrolls the second page up to the frame's top.
+    key -M ctrl -k Tab -m ctrl >/dev/null
+    key l >/dev/null
     settle
-    (( $(ipc columnPdfPage) == 1 )) \
-        || fail "columns: the chevron left the frame on page $(ipc columnPdfPage), not the second"
-    # PdfPageImage renders asynchronously, so the page number flips before the pixels do; the poll is
-    # the wait and the assertion at once. Page two is 34 per cent dark against page one's 0.7, both
-    # measured on the built file, so an unchanged count means the render never followed the turn.
-    page2_white=$page1_white
+    (( $(ipc pdfState false | jq '.scrollY | floor') > 0 )) \
+        || fail "columns: l left the pdf at its top, scrolled to $(ipc pdfState false | jq .scrollY)"
+    # PdfPageImage renders async, and a pixel count also moves on the gap, so page two counts only once its own image lands.
     for i in $(seq 1 20); do
-        shot columns-pdf-page2
-        page2_white=$(count_pixels "$evidence_dir/columns-pdf-page2.png" "$whole" "$near_white")
-        (( page2_white != page1_white )) && break
+        [[ "$(ipc pdfState false | jq '.landed | index(1) != null')" == "true" ]] && break
         sleep 0.2
     done
+    [[ "$(ipc pdfState false | jq '.landed | index(1) != null')" == "true" ]] \
+        || fail "columns: page two never rendered after l, the landed pages are $(ipc pdfState false | jq -c .landed)"
+    settle
+    shot columns-pdf-page2
+    page2_white=$(count_pixels "$evidence_dir/columns-pdf-page2.png" "$whole" "$near_white")
     (( page2_white != page1_white )) \
-        || fail "columns: page two renders the same $page1_white near-white pixels as page one, so the turn changed nothing"
+        || fail "columns: the scrolled pdf draws the same $page1_white near-white pixels as page one, so the scroll changed nothing"
+    key -M ctrl -k Tab -m ctrl >/dev/null
     printf 'COLUMNS pdf pixels blank=%s page1=%s page2=%s\n' "$blank_white" "$page1_white" "$page2_white"
 
     seek_row_named "link"
@@ -15075,13 +15083,24 @@ case_formats() {
     [[ "$(ipc columnPdfPages)" == "2" && "$(ipc columnPdfPage)" == "0" ]] || fail "formats: manual.pdf shows $(ipc columnPdfPages) pages, page $(ipc columnPdfPage)"
     lit=$(column_frame_lit manual-p1)
     (( lit > 200 )) || fail "formats: manual.pdf's first page painted $lit lit pixels"
-    read -r cx cy <<< "$(ipc columnChevronCentre right)"
-    omarchy-drive click "$((wx + cx))" "$((wy + cy))" left >/dev/null
+    # The column is a continuous stack: scroll to its second page, wheel to its bottom, then prove the end refuses more.
+    capmarkdown_column_pointer formats-pdf-page-turn
+    omarchy-drive scroll down 8 >/dev/null || fail 'formats: the PDF stack wheel failed'
+    pdf_expect false '.pages == 2 and .scrollY > 0 and (.landed | index(1) != null)' 'formats second stacked page decoded after scrolling'
+    # The bottom is reached once the last page's box ("x y w h") ends inside the frame's box.
+    pdf_bottom='(.lastPage | test("^[0-9-]+ [0-9-]+ [0-9]+ [0-9]+$")) and ((.lastPage | split(" ") | map(tonumber)) as $p | (.frame | split(" ") | map(tonumber)) as $f | $p[1] + $p[3] <= $f[1] + $f[3] + 1)'
+    for _attempt in 1 2 3 4 5 6; do
+        jq -e "$pdf_bottom" <<< "$(ipc pdfState false)" >/dev/null 2>&1 && break
+        omarchy-drive scroll down 8 >/dev/null || fail 'formats: the PDF stack bottom wheel failed'
+        settle
+    done
+    jq -e "$pdf_bottom" <<< "$(ipc pdfState false)" >/dev/null 2>&1 \
+        || fail "formats: the PDF stack never reached its bottom, $(ipc pdfState false)"
+    p1=$(ipc pdfState false | jq -r '.scrollY')
+    omarchy-drive scroll down 8 >/dev/null || fail 'formats: the PDF stack end wheel failed'
     settle
-    [[ "$(ipc columnPdfPage)" == "1" ]] || fail "formats: the right chevron left manual.pdf on page $(ipc columnPdfPage)"
-    omarchy-drive click "$((wx + cx))" "$((wy + cy))" left >/dev/null
-    settle
-    [[ "$(ipc columnPdfPage)" == "1" ]] || fail "formats: the right chevron went past the last page to $(ipc columnPdfPage)"
+    p2=$(ipc pdfState false | jq -r '.scrollY')
+    [[ "$p2" == "$p1" ]] || fail "formats: the PDF stack scrolled past its last page, $p1 to $p2"
     column_expect broken.pdf error
     [[ "$(ipc columnFailure)" == "This file could not be read." ]] || fail "formats: broken.pdf's sentence is '$(ipc columnFailure)'"
     column_expect sample.txt text
@@ -15542,10 +15561,14 @@ clipboard_wait() {
 . "$repo/tests/ui-dirsortstale.sh"
 . "$repo/tests/ui-makedefault.sh"
 . "$repo/tests/ui-noblank.sh"
+. "$repo/tests/ui-colhold.sh"
 . "$repo/tests/ui-captures.sh"
+. "$repo/tests/ui-captures-glass.sh"
 . "$repo/tests/ui-captures-flasher.sh"
 . "$repo/tests/ui-captures-archives.sh"
 . "$repo/tests/ui-captures-unlock.sh"
+. "$repo/tests/ui-captures-compare.sh"
+. "$repo/tests/ui-captures-raw.sh"
 . "$repo/tests/ui-captures-mountfail.sh"
 . "$repo/tests/ui-captures-runfile.sh"
 . "$repo/tests/ui-captures-merge.sh"
@@ -15555,12 +15578,16 @@ clipboard_wait() {
 . "$repo/tests/ui-captures-bulk.sh"
 . "$repo/tests/ui-captures-tags.sh"
 . "$repo/tests/ui-captures-filter.sh"
+. "$repo/tests/ui-captures-iso.sh"
 . "$repo/tests/ui-transfer-live.sh"
 . "$repo/tests/ui-columns-background.sh"
 . "$repo/tests/ui-colwatch.sh"
 . "$repo/tests/ui-captures-markdown.sh"
+. "$repo/tests/ui-captures-html.sh"
 . "$repo/tests/ui-captures-states.sh"
 . "$repo/tests/ui-captures-gridhover.sh"
+. "$repo/tests/ui-captures-gmlook.sh"
+. "$repo/tests/ui-captures-langmarks.sh"
 # README retakes, one launch per frame at its own size, text size and fixture; 2560x1440 corner park, wait and retry bounds.
 readme_park_x=2559
 readme_park_y=1439
@@ -15907,9 +15934,15 @@ case_readme() {
     printf 'README done\n'
 }
 
-# Native items ui:capsweep and ui:capsweeplow run only by name, outside the default wanted list; so do ui:cap_markdown, ui:cap_markdown_kinds, ui:cap_markdown_tables, ui:cap_markdown_picline, ui:cap_markdown_fences and ui:cap_markdown_fences14, sourced above; so do cap_merge, cap_drops and cap_dropmods, sourced above, and cap_tags, sourced from ui-captures-tags.sh, and ui:cap_flasher and ui:cap_filter, sourced above; so do ui:cap_heldcolumns, ui:cap_sysrefusal, ui:cap_gridreveal, ui:cap_columnsrename and ui:cap_gridhover, sourced above; ui:cap_railmotion runs only by name, sourced from ui-railpointer.sh; ui:cap_mountfail runs only by name, sourced from ui-captures-mountfail.sh; ui:readme runs only by name, defined in this file.
+# Native items ui:capsweep, ui:capsweeplow and ui:cap_columns14 run only by name, outside the default wanted list; so do ui:cap_markdown, ui:cap_markdown_kinds, ui:cap_markdown_tables, ui:cap_markdown_picline, ui:cap_markdown_fences and ui:cap_markdown_fences14, sourced above; so do cap_merge, cap_drops and cap_dropmods, sourced above, and cap_tags, sourced from ui-captures-tags.sh, and ui:cap_flasher and ui:cap_filter, sourced above; so do ui:cap_archives_format_live and ui:cap_archives_format_kanagawa, sourced above; so do ui:cap_heldcolumns, ui:cap_sysrefusal, ui:cap_gridreveal, ui:cap_columnsrename and ui:cap_gridhover, sourced above; ui:cap_railmotion runs only by name, sourced from ui-railpointer.sh; ui:cap_mountfail runs only by name, sourced from ui-captures-mountfail.sh; ui:readme runs only by name, defined in this file; ui:cap_html_failed and ui:cap_html_large run only by name, sourced from ui-captures-html.sh above.
+# ui:cap_raw_grid, ui:cap_raw_columns, ui:cap_raw_quicklook and ui:cap_raw_properties run only by name, sourced from ui-captures-raw.sh.
 . "$repo/tests/ui-captures-sweep.sh"
+# Native items ui:cap_cohesion, ui:cap_cohesion_live, ui:cap_cohesion_gruvbox, ui:cap_cohesion_latte, ui:cap_cohesion_kanagawa, ui:cap_listfocus, ui:cap_cohesion_kgprim and ui:cap_cohesion_pdfmarks run only by name, sourced from ui-captures-cohesion.sh.
+. "$repo/tests/ui-captures-cohesion.sh"
+# Native items ui:cap_b72, ui:cap_b72_live, ui:cap_b72_gruvbox and ui:cap_b72_kanagawa run only by name, like the cohesion kit above.
+. "$repo/tests/ui-captures-b72.sh"
 . "$repo/tests/ui-captures-collide.sh"
+# ui:cap_gm_rail and ui:cap_gm_nethold run only by name: native display, uinput holds and screenshots cannot run headless.
 declare -a wanted=("$@")
 [[ ${#wanted[@]} -eq 0 ]] && wanted=(cursor scroll scrollbar terminal open rows click clickedge ctrlclick shiftscroll querypaste viewrestart dd ddclick griddrop collide sortrestart foldersort duallaunch dirsortstale editplace mute placemenu runscript unmounted sidebar menu background hidden xwsettings selection watch xwwatch reload optical select colour lifted icons thumbs hashcache stale nosweep oem header columnresize columnautofit overflow focus railpointer dualautohidereveal preview pdffocus network netmark networkauth networktimeout gvfs sharebrowser unmount phones trasharm eject poweroff rename renamefirst renamelife renamefar taildrop providers grid columns columnsbackground operations tabs tabdrag openterminal makeexec renderer settings makedefault scrolllane clickthrough wheelunder overlays views formats previewviews reclick colroot colwatch hangshare hanglisting hanginspect openwithdesign noblank previewswap searchnoblank lookopen transferlive recent middleclick opentab xwundo folderviews hiddenlast marqueemargin relstart userthumbnailer dualtab dualdivider)
 

@@ -98,12 +98,21 @@ Item {
     // The system clipboard for files, one line for set, get and clear alike.
     signal clipResult(var message)
     property int metaToken: 0
+    // The coloured lines of one slot's file or text, answered late with the token askCode returned.
+    signal codeResult(var message)
+    signal htmlResult(var message)
+    property int codeToken: 0
+    // The unified diff of two files, or the reason there is none, answered late with the token askCompare returned.
+    signal compareResult(var message)
+    property int compareToken: 0
     // One counter numbers every PDF fetch, so two viewers never share an id.
     property int pdfCopySeq: 0
     signal meta(int row, int w, int h, int orient, real durationMs, int sampleRate, int entries, real unpacked, bool archiveFailed, var names, real lines, bool partial, bool linesFailed, string target, bool targetDir, string owner)
     signal shebang(string path, bool hasShebang, int id)
     // A PDF fetched into a session-private copy under a deadline; err names the refusal, stalled is the wait that ran out.
     signal pdfCopied(int id, string path, string err, bool stalled)
+    // A font's facts and three sample files, or err; ui/FontPane.qml builds the request, see src/backend/fontinfo/render.rs.
+    signal fontLooked(var message)
     signal fsInfo(string fs, real free, string path, string storageClass, bool tagable, bool systemVolume)
     // The one line no request asked for: the directory the current listing came from changed under
     // it. path is that directory, so a pane that has since moved can ignore it; see docs/protocol.md.
@@ -154,7 +163,7 @@ Item {
     function resetSort(path) {
         // Read once per listing, so browsing never writes; only Sort.resort does.
         var order = FolderSorts.orderFor(ViewState.state.folderSorts, path,
-                                         ViewState.state.sort, ViewState.state.rememberSort !== false)
+                                         ViewState.state.sort, ViewState.state.rememberSort !== false, UserDirs.newestFolders)
         root.sortBy = order.key === "date" ? "mtime" : order.key
         root.sortDesc = order.reverse === true
     }
@@ -338,6 +347,27 @@ Item {
         return root.metaToken
     }
 
+    // source is {path} for a file the backend opens or {text, name, lang} for bytes the UI holds; a newer ask on a slot ends the older one.
+    function askCode(slot, source, first, count) {
+        root.codeToken += 1
+        root.send(Object.assign({ c: "code", token: root.codeToken, slot: slot, first: first, count: count }, source))
+        return root.codeToken
+    }
+
+    function askHtml(slot, path, width, cancel, height) {
+        root.codeToken += 1
+        var message = { c: "html", token: root.codeToken, slot: slot, path: path, width: width, cancel: cancel }
+        if (height > 0) message.height = height
+        root.send(message)
+        return root.codeToken
+    }
+
+    function askCompare(a, b) {
+        root.compareToken += 1
+        root.send({ c: "compare", token: root.compareToken, a: a, b: b })
+        return root.compareToken
+    }
+
     function askFsInfo() {
         root.send({ c: "fsinfo" })
     }
@@ -345,7 +375,7 @@ Item {
     // A read-only look elsewhere; Tab passes hiddenLast false, other callers keep the listing order, and only a column passes keep, the directories drawn, and its folder's own remembered order.
     function peek(path, first, hidden, hiddenLast, keep) {
         var last = hiddenLast === undefined ? ViewState.state.hiddenLast === true : hiddenLast === true
-        var order = FolderSorts.peekOrder(ViewState.state.folderSorts, path, ViewState.state.rememberSort, keep)
+        var order = FolderSorts.peekOrder(ViewState.state.folderSorts, path, ViewState.state.rememberSort, keep, UserDirs.newestFolders, ViewState.state.sort)
         root.send({ c: "peek", path: path, first: first, hidden: hidden, hiddenLast: last, watch: Array.isArray(keep), keep: keep, by: order.by, desc: order.desc })
     }
 

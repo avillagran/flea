@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # Render hostile Markdown through the preview and Text.MarkdownText; require a control GET and zero corpus requests.
 set -u
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
@@ -23,7 +24,7 @@ trap cleanup EXIT
 mkdir -p "$test_root/config" "$test_root/home" "$test_root/state" "$test_root/cache" "$test_root/runtime" || exit 1
 chmod 700 "$test_root/runtime" || exit 1
 cp -a ui "$test_root/config/flea" || exit 1
-ln -s "$(readlink -f ui/boot/Commons)" "$test_root/config/Commons" || exit 1
+headless_commons "$test_root" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$test_root/config/Ui" || exit 1
 cp tests/markdown-security.qml "$test_root/config/shell.qml" || exit 1
 cp tests/mdfence.js "$test_root/config/mdfence.js" || exit 1
@@ -165,6 +166,7 @@ for tag_name in DROP_CONTENT_NAMES:
 defs = []
 # Front matter and display math lines reach the screen as code, so an image written there must stay literal text.
 lines = ["---", f"title: ![front]({H}/frontmatter/x.png)", f"[front]({H}/frontmatter/link.png)", "---", "", "# Security corpus", ""]
+lines.extend(["```", "<b>x</b> <img src=x> &amp;", "```", ""])
 contexts = [
     ("alone", lambda s: [s, ""]),
     ("quote", lambda s: ["> " + s, ""]),

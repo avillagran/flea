@@ -1,9 +1,13 @@
 module flea
+RowDropTarget 1.0 RowDropTarget.qml
+TrashDropHandler 1.0 TrashDropHandler.qml
 singleton Theme 1.0 Theme.qml
+ThemeColors 1.0 ThemeColors.qml
 singleton Glass 1.0 Glass.qml
 singleton MediaSound 1.0 MediaSound.qml
 singleton Scripts 1.0 Scripts.qml
 singleton ViewState 1.0 ViewState.qml
+singleton UserDirs 1.0 UserDirs.qml
 singleton UpdateCheck 1.0 UpdateCheck.qml
 singleton DefaultClaim 1.0 DefaultClaim.qml
 singleton SettingsMetrics 1.0 SettingsMetrics.qml
@@ -13,17 +17,28 @@ ChromeBar 1.0 ChromeBar.qml
 ChromeButton 1.0 ChromeButton.qml
 ChromeModes 1.0 ChromeModes.qml
 ColumnsArea 1.0 ColumnsArea.qml
+ColumnsLanding 1.0 ColumnsLanding.qml
 ColumnPane 1.0 ColumnPane.qml
 ColumnRow 1.0 ColumnRow.qml
 CountedWorker 1.0 CountedWorker.qml
 Crumb 1.0 Crumb.qml
 CursorMark 1.0 CursorMark.qml
 PreviewColumn 1.0 PreviewColumn.qml
+CodeLines 1.0 CodeLines.qml
+CompareView 1.0 CompareView.qml
+CodeRefusal 1.0 CodeRefusal.qml
+CsvTable 1.0 CsvTable.qml
 PreviewLines 1.0 PreviewLines.qml
+PreviewScroll 1.0 PreviewScroll.qml
 PreviewMarkdown 1.0 PreviewMarkdown.qml
+PreviewHtml 1.0 PreviewHtml.qml
+HtmlPane 1.0 HtmlPane.qml
+HtmlClip 1.0 HtmlClip.qml
 MarkdownSource 1.0 MarkdownSource.qml
 MarkdownRemote 1.0 MarkdownRemote.qml
+QuickLookBar 1.0 QuickLookBar.qml
 MarkdownPane 1.0 MarkdownPane.qml
+FontPane 1.0 FontPane.qml
 MarkdownText 1.0 MarkdownText.qml
 MarkdownPictures 1.0 MarkdownPictures.qml
 MarkdownImages 1.0 MarkdownImages.qml
@@ -43,6 +58,7 @@ PreviewSwap 1.0 PreviewSwap.qml
 PreviewImage 1.0 PreviewImage.qml
 PreviewImagePan 1.0 PreviewImagePan.qml
 PreviewImageSharp 1.0 PreviewImageSharp.qml
+PreviewAnimation 1.0 PreviewAnimation.qml
 ConvertDialog 1.0 ConvertDialog.qml
 BulkOldNames 1.0 BulkOldNames.qml
 BulkRenameDialog 1.0 BulkRenameDialog.qml
@@ -55,6 +71,7 @@ DialogTitle 1.0 DialogTitle.qml
 Divider 1.0 Divider.qml
 EscapeHint 1.0 EscapeHint.qml
 ContextMenu 1.0 ContextMenu.qml
+MenuHost 1.0 MenuHost.qml
 KeymapSheet 1.0 KeymapSheet.qml
 KeymapSheetResult 1.0 KeymapSheetResult.qml
 SettingsPanel 1.0 SettingsPanel.qml
@@ -65,6 +82,7 @@ SettingsGroup 1.0 SettingsGroup.qml
 SettingsHint 1.0 SettingsHint.qml
 SettingsRuler 1.0 SettingsRuler.qml
 SettingsSegment 1.0 SettingsSegment.qml
+MediaSession 1.0 MediaSession.qml
 MediaStrip 1.0 MediaStrip.qml
 MediaTrack 1.0 MediaTrack.qml
 MediaVolume 1.0 MediaVolume.qml
@@ -88,12 +106,14 @@ FitMetrics 1.0 FitMetrics.qml
 RowDrag 1.0 RowDrag.qml
 WindowDrag 1.0 WindowDrag.qml
 Glyph 1.0 Glyph.qml
+LangMark 1.0 LangMark.qml
 GlyphSolid 1.0 GlyphSolid.qml
 GvfsBridge 1.0 GvfsBridge.qml
 GridTile 1.0 GridTile.qml
 GridArea 1.0 GridArea.qml
 Header 1.0 Header.qml
 Ipc 1.0 Ipc.qml
+IpcControls 1.0 IpcControls.qml
 IpcMenuState 1.0 IpcMenuState.qml
 IpcPreviewState 1.0 IpcPreviewState.qml
 List 1.0 List.qml
@@ -111,6 +131,8 @@ FleaMark 1.0 FleaMark.qml
 Opener 1.0 Opener.qml
 Preview 1.0 Preview.qml
 PreviewArchive 1.0 PreviewArchive.qml
+PreviewFacts 1.0 PreviewFacts.qml
+PreviewFactsLine 1.0 PreviewFactsLine.qml
 PreviewMedia 1.0 PreviewMedia.qml
 QuickLookPrepare 1.0 QuickLookPrepare.qml
 QuickLookWarm 1.0 QuickLookWarm.qml
@@ -118,6 +140,7 @@ QuickLookSwap 1.0 QuickLookSwap.qml
 PreviewText 1.0 PreviewText.qml
 Row 1.0 Row.qml
 ResizeHandle 1.0 ResizeHandle.qml
+PreviewEdge 1.0 PreviewEdge.qml
 Pane 1.0 Pane.qml
 PickerBox 1.0 PickerBox.qml
 PickerChrome 1.0 PickerChrome.qml
@@ -128,6 +151,8 @@ PickerSelection 1.0 PickerSelection.qml
 PickerPlaces 1.0 PickerPlaces.qml
 PickerRecent 1.0 PickerRecent.qml
 PickerSave 1.0 PickerSave.qml
+PickerAnswers 1.0 PickerAnswers.qml
+PickerFilter 1.0 PickerFilter.qml
 PickerPathBar 1.0 PickerPathBar.qml
 PathEntry 1.0 PathEntry.qml
 PanePath 1.0 PanePath.qml
@@ -138,6 +163,9 @@ ParkedWait 1.0 ParkedWait.qml
 ShareBrowser 1.0 ShareBrowser.qml
 Sidebar 1.0 Sidebar.qml
 SidebarRow 1.0 SidebarRow.qml
+RailDrop 1.0 RailDrop.qml
+RailTrashRow 1.0 RailTrashRow.qml
+DropTarget 1.0 DropTarget.qml
 Spinner 1.0 Spinner.qml
 SearchStrip 1.0 SearchStrip.qml
 FilterStrip 1.0 FilterStrip.qml

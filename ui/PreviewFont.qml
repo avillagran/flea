@@ -44,7 +44,7 @@ FocusScope {
         id: actions
         path: root.path
         onInfoChanged: if (info) loadedFont.source = Format.fileUri(root.path)
-        onFinished: function(verb) { if (verb === "info" && !root.compact) Qt.callLater(root.focusFirst) }
+        onFinished: function(verb) { if (verb === "info" && !root.compact) root.focusFirst() }
     }
     FontLoader { id: loadedFont }
 

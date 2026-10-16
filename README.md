@@ -30,7 +30,7 @@ Large directories stay responsive: the window loads rows and requests thumbnails
 
 - **Four views.** List, columns, grid and two panes side by side, with tabs and natural filename sorting.
 - **Quick Look.** Press Space for images, PDFs, text, media, 3D model thumbnails and archive contents.
-- **Fonts.** Open fonts with Enter or Space to preview their glyphs, alphabet, numbers, symbols and editable sample text. Browse collection faces, adjust variable axes and sample size, and install or uninstall user fonts. Apply installed families as desktop or terminal defaults and restore previous preferences. Linux availability is checked through Fontconfig; an installation it cannot expose to applications is rolled back. See [font management](docs/fonts.md).
+- **Fonts.** Open fonts with Enter or Space for Quick Look, then choose **Manage font…** for glyphs, alphabets, symbols and editable sample text. Browse collection faces, adjust variable axes and sample size, and install or uninstall user fonts. Apply installed families as desktop or terminal defaults and restore previous preferences. Linux availability is checked through Fontconfig; an installation it cannot expose to applications is rolled back. See [font management](docs/fonts.md).
 - **File operations.** Copy, move, rename, trash, compress and extract, with an undo journal. Rename several files in one card. Pasting a folder onto one with the same name merges them, and undo reverts the merge. Opening a script, a program or an AppImage asks first: Run, Run in terminal or Open as text. Properties counts a folder's size and items.
 - **Tags.** Seven tags in your theme's colours, set with `T` and the keys 1 to 7, listed in the sidebar and found with `tag:red`.
 - **Search.** Ranked results replace the listing as you type. Esc returns to the folder and the cursor; Enter keeps the results.
@@ -129,6 +129,8 @@ If you previously pinned another directory handler, restore that handler explici
 **The shelf** sits in the Omarchy bar: send files to it from any menu, drag them out into any app, and pin the ones you reuse. **Phones** are Devices rows over MTP, AFC and PTP.
 
 **Dragging** moves within one device and copies between devices. Hold Ctrl to copy, Shift to move, or Ctrl with Shift to link through the Paste as links card; Flea reads these keys when the drag starts. A drag into another app offers copy, or move with Shift, or a link with Ctrl and Shift, and that app does the work: Flea deletes nothing afterwards. A terminal gets the path.
+
+**Dragging to Trash**: drop rows on the rail's Trash row and they go to the trash, the same as `dd`, and `z` puts them back. Only a drag that started in that Flea window is taken, so another app's files are never deleted by a drop.
 
 <p align="center">
   <img src="docs/images/shelf.png" width="49%" alt="The shelf card open over Flea, with thumbnails, pins and the last three screenshots">
@@ -292,3 +294,7 @@ If this saved you an afternoon, you can
 ## Licence
 
 [MIT](LICENSE).
+
+Language marks: the logos baked into `ui/js/LangMarkPaths.js` are the simple-icons geometry
+(CC0 1.0, https://github.com/simple-icons/simple-icons; the `.svg` sources carry no version
+stamp) and remain their owners' trademarks.

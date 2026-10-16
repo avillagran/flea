@@ -1,10 +1,19 @@
 # Font preview, installation and defaults
 
-Open a font with **Enter** or **Space** to view it inside Flea. The columns view also
-shows a font preview; **Expand** opens the full viewer. Font loading and inspection
-run only for the selected file, outside directory listing and thumbnail work.
+Open a font with **Enter** or **Space** to view it inside Flea. TrueType, OpenType
+and TTC collections initially use Flea's existing Quick Look: three fixed samples
+rendered by ImageMagick in an isolated helper, with cached images and font facts.
+Use **Tab**, then **Enter**, or click **Manage font…** to replace that sample with
+the interactive viewer and installation controls. ImageMagick is optional: if the quick sample cannot be
+rendered, **Manage font…** remains available. Other supported containers open the
+interactive viewer directly. Closing and reopening Quick Look restores the initial sample.
 
-The viewer includes:
+The columns view also shows an interactive, compact font preview; **Expand** opens
+Quick Look. Font loading and inspection run only for the selected file, outside
+directory listing and thumbnail work. Interactive specimens use Qt's `FontLoader`
+inside the GUI; the initial Quick Look retains the existing isolated renderer.
+
+The interactive viewer includes:
 
 - A sample of characters actually present in the selected face.
 - Uppercase and lowercase alphabets, numbers, symbols and accented characters.
@@ -119,6 +128,7 @@ bash tests/fonts.sh
 ```
 
 The suite uses isolated user directories and a private GSettings keyfile backend.
+Its real quick-sample integration leg requires ImageMagick and bubblewrap.
 It covers real font installation, discovery and removal; invalid inputs and
 rollback; collection faces and variable axes; all seven preference destinations;
 restore conflicts, dotfile symlinks and failure of the desktop settings service.
@@ -127,6 +137,9 @@ journals written by earlier versions. When installed, Kitty, Ghostty and Foot pa
 the generated preferences themselves. A blocked-interpreter integration check
 verifies that font inspection, installation, defaults and variable axes work without
 invoking Python. Python remains a test harness and fixture generator.
-The offscreen UI tests exercise the shipped preview, pane/backend, editable sample,
+`bash tests/fontpane.sh` covers the existing quick sample's lifecycle, theme changes
+and stale replies. Rust tests cover the `.otf` MIME collision with OpenDocument
+formula templates without treating an actual office document as a font.
+The offscreen UI tests exercise the sample-to-management transition, pane/backend, editable sample,
 install controls and default apply/restore controls. They do not change the
 operator's font preferences.

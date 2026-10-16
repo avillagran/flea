@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # Prove Markdown Loader activation and plain-text teardown; statically pin four panes without direct Layouts imports.
 set -u
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
 cd "$(dirname "$0")/.." || exit 1
 
 # A file path, not an inline Component: nothing compiles at startup.
-grep -q 'source: "MarkdownPane.qml"' ui/Preview.qml \
+grep -q 'source: root.isHtml ? "HtmlPane.qml" : "MarkdownPane.qml"' ui/Preview.qml \
     || { echo "FAIL Quick Look builds its Markdown bar eagerly"; exit 1; }
-grep -q 'source: "PreviewMarkdown.qml"' ui/PreviewColumn.qml \
+grep -q 'source: root.isHtmlRow ? "PreviewHtml.qml" : "PreviewMarkdown.qml"' ui/PreviewColumn.qml \
     || { echo "FAIL the column builds its Markdown pane eagerly"; exit 1; }
-if grep -nE '^[[:space:]]*(Flea\.)?(PreviewMarkdown|MarkdownPane)[[:space:]]*\{' ui/Preview.qml ui/PreviewColumn.qml; then
-    echo "FAIL a Markdown pane is instantiated directly"
+if grep -nE '^[[:space:]]*(Flea\.)?(PreviewMarkdown|MarkdownPane|PreviewHtml|HtmlPane)[[:space:]]*\{' ui/Preview.qml ui/PreviewColumn.qml; then
+    echo "FAIL a document pane is instantiated directly"
     exit 1
 fi
 # Pin direct QtQuick.Layouts imports in these four panes, not transitive runtime module loading.
@@ -33,7 +34,7 @@ trap cleanup EXIT
 mkdir -p "$test_root/config" "$test_root/home" "$test_root/state" "$test_root/cache" "$test_root/runtime" || exit 1
 chmod 700 "$test_root/runtime" || exit 1
 ln -s "$PWD/ui" "$test_root/config/flea" || exit 1
-ln -s "$(readlink -f ui/boot/Commons)" "$test_root/config/Commons" || exit 1
+headless_commons "$test_root" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$test_root/config/Ui" || exit 1
 cp tests/markdown-memory.qml "$test_root/config/shell.qml" || exit 1
 echo "plain text" > "$test_root/note.txt" || exit 1

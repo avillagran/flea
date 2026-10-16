@@ -1,7 +1,7 @@
 # Maintainer: GM <gianmarcomorales@icloud.com>
 
 pkgname=flea
-pkgver=0.3.10
+pkgver=0.3.11
 pkgrel=1
 pkgdesc='Fast, keyboard-first file manager for Omarchy'
 arch=('x86_64' 'aarch64')
@@ -28,17 +28,20 @@ license=('MIT' 'Apache-2.0' 'EPL-2.0' 'BSD-2-Clause')
 # an Android phone lists and nothing else does. Measured on an iPhone (iOS 26.6.2): its PTP leg mounts
 # and answers zero folders, and AFC is the one that lists DCIM, so the iPhone needs both.
 # quickjs-ng is what flea --figure-helper execs for Markdown maths and diagrams, so figures need it installed.
-depends=('bubblewrap' 'coreutils' 'expect' 'fontconfig' 'gcc-libs' 'glib2' 'glibc' 'gvfs' 'gvfs-afc' 'gvfs-dnssd' 'gvfs-gphoto2' 'gvfs-mtp' 'gvfs-nfs' 'gvfs-smb' 'hicolor-icon-theme' 'kimageformats' 'libheif' 'omarchy' 'python' 'python-gobject' 'qt6-multimedia' 'qt6-webengine' 'quickjs-ng' 'quickshell' 'shared-mime-info' 'udisks2' 'usbmuxd' 'util-linux' 'wl-clipboard' 'xdg-terminal-exec' 'xdg-utils')
+
+# bat colours code previews and jq formats JSON before the sandbox renders it.
+depends=('bat' 'coreutils' 'fontconfig' 'bubblewrap' 'expect' 'gcc-libs' 'glib2' 'glibc' 'gvfs' 'gvfs-afc' 'gvfs-dnssd' 'gvfs-gphoto2' 'gvfs-mtp' 'gvfs-nfs' 'gvfs-smb' 'hicolor-icon-theme' 'jq' 'kimageformats' 'libheif' 'omarchy' 'python' 'python-gobject' 'qt6-multimedia' 'qt6-webengine' 'quickjs-ng' 'quickshell' 'shared-mime-info' 'udisks2' 'usbmuxd' 'util-linux' 'wl-clipboard' 'xdg-terminal-exec' 'xdg-utils')
 makedepends=('cargo')
 # Both packages own /usr/bin/flea, so pacman refuses the pair rather than leaving one half-installed.
 conflicts=('flea-git')
 optdepends=('libarchive: archive listing and extraction'
             '7zip: 7z archive support'
-            'imagemagick: image conversion'
+            'imagemagick: image conversion and font quick samples'
             'tailscale: Taildrop sharing'
             'ffmpeg: media metadata in the preview column'
             'ffmpegthumbnailer: video thumbnails, made by one pre-linked worker through libffmpegthumbnailer.so.4, or by the ffmpegthumbnailer program per video when that library will not load'
             'dropbox-cli: Dropbox share links'
+            'libreoffice: office document previews'
             'zoxide: frecent folders in the folder jump of the path bar')
 # The release profile strips, so a debug package would have nothing to hold.
 options=('!debug')
@@ -79,6 +82,7 @@ package() {
   # Name=, so a vendor name is the convention and the only way to avoid a pacman file conflict.
   install -Dm755 tools/flea-filemanager1 "$pkgdir/usr/lib/flea/flea-filemanager1"
   install -Dm644 packaging/com.thisisgm.flea.FileManager1.service -t "$pkgdir/usr/share/dbus-1/services"
+  install -Dm755 tools/flea-mpris "$pkgdir/usr/lib/flea/flea-mpris"
   install -Dm644 packaging/com.thisisgm.flea.desktop -t "$pkgdir/usr/share/applications"
   install -Dm644 packaging/com.thisisgm.flea.svg -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
   install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"

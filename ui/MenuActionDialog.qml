@@ -33,7 +33,8 @@ FocusScope {
     readonly property bool canSubmit: !busy && inputAction && field.text.length > 0
     // The lines that change in place while the folder counts; the model names them and is not rebuilt as the count moves.
     readonly property var liveLines: facts.ok ? ({size: PropertyFacts.size(facts.bytes, walk), contains: PropertyFacts.contains(walk)}) : ({})
-    readonly property var extraPairs: PropertyFacts.extraPairs(extra)
+    // Raw.html and Properties040: a photo's Camera, Lens, Exposure and Taken, the ones its EXIF names, sit before Modified.
+    readonly property var extraPairs: PropertyFacts.extraPairs(Object.assign({ok: root.facts.ok}, root.extra), root.facts.photo)
     readonly property string title: ({moveTo: "Move to", copyTo: "Copy to", properties: "Properties", newFile: "New file", deletePermanently: "Delete permanently"})[action] || ""
     // The card and its scrim step aside for the confirmation, and stay aside while it fades out with a closing dialog.
     readonly property bool cardShown: !confirmation.opened && (root.opened || !confirmation.visible)

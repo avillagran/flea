@@ -14,7 +14,40 @@ export FLEA_BIN="${FLEA_BIN:-$repo/target/release/flea}"
 export FLEA_UI="$repo/ui"
 . "$repo/tools/flea-sandbox-guard"
 
-SB=$FIXTURE_ROOT/flea-drag-char-$$
+drag_case=${1:-all}
+if [[ "$drag_case" == headless ]]; then
+  exec /bin/bash "$repo/tests/raildrop.sh"
+fi
+capture_root=""
+case "$drag_case" in
+  all)
+    sandbox_root_ok
+    mkdir -p "$SANDBOX_ROOT" || exit 1
+    SB=$(mktemp -d "$SANDBOX_ROOT/flea-drag-char-XXXXXXXX") || exit 1
+    : > "$SB/$SANDBOX_MARKER" || exit 1
+    ;;
+  raildrop)
+    sandbox_root_ok
+    mkdir -p "$SANDBOX_ROOT" || exit 1
+    capture_root=$(mktemp -d "$SANDBOX_ROOT/native.XXXXXXXX") || exit 1
+    printf 'raildrop native captures\n' > "$capture_root/$SANDBOX_MARKER" || exit 1
+    FIXTURE_ROOT="$capture_root"
+    SB="$capture_root/fixture"
+    printf 'RAILDROP_EVIDENCE_ROOT=%s\n' "$capture_root"
+    ;;
+  look235)
+    look235_started=$SECONDS
+    FIXTURE_ROOT="$repo/.superpowers/look235"
+    sandbox_root_ok
+    mkdir -p "$SANDBOX_ROOT" || exit 1
+    capture_root=$(mktemp -d "$SANDBOX_ROOT/run.XXXXXXXX") || exit 1
+    printf 'look235 native captures\n' > "$capture_root/$SANDBOX_MARKER" || exit 1
+    FIXTURE_ROOT="$capture_root"
+    SB="$capture_root/fixture"
+    printf 'LOOK235_EVIDENCE_ROOT=%s\n' "$capture_root"
+    ;;
+  *) printf 'Usage: %s [all|headless|raildrop|look235]\n' "$0" >&2; exit 2 ;;
+esac
 HOMEDIR=$SB/home
 pass=0
 fail=0
@@ -275,9 +308,17 @@ cleanup() {
         *) bad "could not read the operator journal $journal to check it for sandbox paths from $SB"; status=1 ;;
       esac
     fi
-    sandbox_remove "$SB" 2>/dev/null
-    # R7's tmpfs root has its own mktemp and marker, checked again before deletion.
-    case "${XDEV:-}" in /dev/shm/flea-drag-xdev-*) FIXTURE_ROOT=/dev/shm sandbox_remove "$XDEV" ;; esac
+    sandbox_remove "$SB" 2>/dev/null || status=1
+    # The shared rail/R7 tmpfs root names this run in its marker; the runtime parent is never a target.
+    if [[ -n "${XDEV:-}" ]]; then
+      if [[ "${XDG_RUNTIME_DIR:-}" == "/run/user/$(id -u)" && "$XDEV" == /* \
+          && "$XDEV" == "$XDG_RUNTIME_DIR"/flea-drag-xdev-???????? \
+          && -f "$XDEV/$SANDBOX_MARKER" && "$(< "$XDEV/$SANDBOX_MARKER")" == "$SB" ]]; then
+        FIXTURE_ROOT="$XDG_RUNTIME_DIR" sandbox_remove "$XDEV" || status=1
+      else
+        bad "cleanup refused unowned tmpfs fixture $XDEV"; status=1
+      fi
+    fi
   else
     bad "cleanup did not drain; fixtures kept at $SB ${XDEV:-}"
   fi
@@ -299,6 +340,34 @@ ln -sfn "$HOME/.local/state/omarchy/current" "$HOMEDIR/.local/state/omarchy/curr
 for f in r1a r1b r2 r3 r4; do printf '%s payload\n' "$f" > "$HOMEDIR/$f.txt"; done
 # R6 shows hidden files in a second tab on the same directory, so every index below this one shifts.
 printf 'hidden\n' > "$HOMEDIR/.r0hidden"
+if [[ "$drag_case" == look235 ]]; then
+  mkdir "$HOMEDIR/omarchy" || exit 1
+  seed=$(jq -nc --arg path "$HOMEDIR/omarchy" '{view:"list",keys:"default",updates:{autoCheck:false},
+    places:{rail:"shown",autoHide:false,showHome:true,showTrash:true,showNetwork:false,showDevices:false,
+      favourites:[{label:"omarchy",path:$path}]}}') || exit 1
+  HOME="$HOMEDIR" "$FLEA_BIN" --ui-state "$seed" >/dev/null || exit 1
+else
+  [[ -d "$XDG_RUNTIME_DIR" && -O "$XDG_RUNTIME_DIR" && ! -L "$XDG_RUNTIME_DIR" ]] \
+    || die "the real runtime directory is unavailable or not owned"
+  XDEV=$(mktemp -d "$XDG_RUNTIME_DIR/flea-drag-xdev-XXXXXXXX") || exit 1
+  printf '%s\n' "$SB" > "$XDEV/$SANDBOX_MARKER" || exit 1
+  xdev_source_dev=$(stat -c %d -- "$HOMEDIR") || die "cannot stat the source fixture"
+  xdev_dest_dev=$(stat -c %d -- "$XDEV") || die "cannot stat the tmpfs fixture"
+  [[ "$xdev_source_dev" != "$xdev_dest_dev" ]] || die "the tmpfs fixture is on the source filesystem"
+  [[ "$(stat -f -c %T -- "$XDEV")" == tmpfs ]] || die "the runtime fixture is not tmpfs"
+  printf 'DRAG_XDEV source_dev=%s destination_dev=%s filesystem=tmpfs path=%s\n' "$xdev_source_dev" "$xdev_dest_dev" "$XDEV"
+  mkdir -p "$XDEV/big" "$SB/bin" || exit 1
+  # Sample input: one removable lsblk volume with a tmpfs mountpoint, the suite's existing other-device stand-in.
+  jq -nc --arg path "$XDEV/big" '{blockdevices:[{name:"sdz1",path:"/dev/sdz1",label:"USB",mountpoints:[$path],rm:true,ro:false,tran:"usb",size:128000000000,type:"part",fstype:"tmpfs"}]}' > "$SB/lsblk.json" || exit 1
+  cat > "$SB/bin/lsblk" <<'SH'
+#!/usr/bin/env bash
+cat -- "$FLEA_DRAG_LSBLK"
+SH
+  chmod +x "$SB/bin/lsblk" || exit 1
+  export PATH="$SB/bin:$PATH" FLEA_DRAG_LSBLK="$SB/lsblk.json"
+  seed=$(jq -nc --arg path "$HOMEDIR/aaa" '{view:"list",keys:"default",updates:{autoCheck:false},places:{rail:"shown",autoHide:false,showHome:true,showTrash:true,showNetwork:false,showDevices:true,favourites:[{label:"Favorite",path:$path}]}}') || exit 1
+  HOME="$HOMEDIR" "$FLEA_BIN" --ui-state "$seed" >/dev/null || exit 1
+fi
 
 # ---------------------------------------------------------------- pointer
 warp() { glide_to "$1" "$2"; }
@@ -392,7 +461,7 @@ expect_ipc() {
   die "$reader expected [$expected], observed [$observed]"
 }
 
-# Sample output: DRAG_R7 phase=before-Return reader=pathBarText value=/dev/shm/flea-drag-xdev-AbCdEf/big
+# Sample output: DRAG_R7 phase=before-Return reader=pathBarText value=/run/user/1000/flea-drag-xdev-AbCdEf12/big
 walk_state() {
   local leg="$1" phase="$2" reader value
   for reader in listInFlight listRequests tabCount tabIndex tabLabels path keyDeliveryState pathBarOpen pathBarText lastMessage statusError; do
@@ -622,6 +691,82 @@ wait_for() {
   return 1
 }
 
+# Native file-drop proof and the two mid-drag captures share the suite's existing pointer driver.
+raildrop_case() {
+  local label group name destination verb state index point x y sx sy before evidence top focus
+  expect_ipc listInFlight false
+  native_key -k Escape
+  before=$(ipc total)
+  evidence="${capture_root:-$SB}/raildrop-evidence"
+  mkdir -p "$evidence" || die "raildrop: cannot create evidence directory"
+  for label in Favorite USB; do
+    if [[ "$label" == Favorite ]]; then
+      group=favourite; name=rail-move.txt; destination="$HOMEDIR/aaa"; verb=Move
+    else
+      group=device; name=rail-copy.txt; destination="$XDEV/big"; verb=Copy
+    fi
+    state=$(ipc railEntries) || die "raildrop: rail entries unavailable"
+    # Sample input: [{"label":"USB","group":"device","path":"/run/user/1000/flea-drag-xdev-AbCdEf12/big"}] selects the unique row's index.
+    index=$(jq -er --arg label "$label" --arg group "$group" 'to_entries | map(select(.value.label == $label and .value.group == $group)) | if length == 1 then .[0].key else error("rail target missing or ambiguous") end' <<< "$state") || die "raildrop: no unique $label row"
+    point=$(ipc railRowCentre "$index")
+    [[ "$point" =~ ^[0-9]+\ [0-9]+$ ]] || die "raildrop: $label has no geometry"
+    read -r x y <<< "$point"
+    printf '%s payload\n' "$name" > "$HOMEDIR/$name"
+    expect_ipc total $((before + 1))
+    centre_into sx sy "$name"
+    warp "$sx" "$sy"; sleep 0.4
+    press; sleep 0.3
+    glide_to "$((WX + x))" "$((WY + y))"
+    if [[ "$verb" == Move ]]; then
+      expect_ipc stickyMessage "Move 1 item to Favorite · Ctrl copies, Shift moves"
+    else
+      expect_ipc stickyMessage "Copy 1 item to USB"
+    fi
+    state=$(ipc railDetails) || die "raildrop: cue geometry unavailable"
+    # Sample input: railDetails.rows has {label:"Favorite",detail:"move here",labelRect:{x:42,width:40},detailRect:{x:140,width:60}}.
+    jq -e --arg label "$label" --arg cue "$([[ "$verb" == Move ]] && echo 'move here' || echo 'copy here')" '[.rows[] | select(.label == $label)] | length == 1 and (.[0] | .detail == $cue and .indicatorVisible == false and .labelRect.x + .labelRect.width < .detailRect.x)' <<< "$state" >/dev/null || die "raildrop: $label drop cue failed: $state"
+    [[ "$button_down" == true ]] || die "raildrop: capture lost its held pointer"
+    printf '%s\n' "$state" > "$evidence/$label.railDetails.json"
+    ipc statusActivityState > "$evidence/$label.statusActivityState.json" || die "raildrop: status capture failed"
+    if [[ "$drag_case" == raildrop ]]; then
+      grim -g "$WX,$WY ${WW}x${WH}" "$evidence/$label.png" || die "raildrop: screenshot failed"
+    fi
+    printf 'RAILDROP_HOVER row=%s verb=%s cue=%s held=true\n' "$label" "$verb" "$([[ "$verb" == Move ]] && echo move || echo copy)"
+    release
+    wait_for "$destination/$name" present || die "raildrop: $label drop never landed"
+    if [[ "$verb" == Move ]]; then
+      [[ ! -e "$HOMEDIR/$name" ]] || die "raildrop: same-device favorite copied instead of moving"
+      expect_ipc total "$before"
+    else
+      [[ -e "$HOMEDIR/$name" ]] || die "raildrop: other-device USB removed the source"
+    fi
+    cmp -s "$destination/$name" <(printf '%s payload\n' "$name") || die "raildrop: landed content changed"
+    printf 'RAILDROP_DROP row=%s verb=%s source=%s payload=exact\n' "$label" "$verb" "$([[ -e "$HOMEDIR/$name" ]] && echo kept || echo gone)"
+    state=$(ipc keyDeliveryState) || die "raildrop: key delivery state unavailable"
+    focus=$(ipc focusView) || die "raildrop: focus view unavailable"
+    # Sample input (tests/fixtures/undo-journal-golden.json): {"v":2,"gen":7,"undo":[{"op":"move","steps":[{"k":"m","from":"/a/x","to":"/b/x"}]}],"redo":[]}.
+    top=$(jq -c '.undo[-1] // null' "$UNDO_DIR/undo-journal" 2>/dev/null) || top='"unavailable"'
+    printf 'RAILDROP_BEFORE_UNDO row=%s view=%s focus=%s top=%s\n' "$label" "$focus" "$state" "$top"
+    native_key z
+    wait_for "$destination/$name" absent || die "raildrop: undo kept $label destination"
+    wait_for "$HOMEDIR/$name" present || die "raildrop: undo lost the source"
+    owned_path "$HOMEDIR/$name"; rm -- "$HOMEDIR/$name"
+    expect_ipc total "$before"
+    printf 'RAILDROP_UNDO row=%s source=restored destination=gone\n' "$label"
+  done
+}
+
+if [[ "$drag_case" == raildrop ]]; then
+  raildrop_case
+  printf 'RAILDROP_NATIVE DONE failed=%s evidence=%s\n' "$fail" "$capture_root/raildrop-evidence"
+  exit "$fail"
+fi
+
+if [[ "$drag_case" == look235 ]]; then
+  . "$repo/tests/drag-look235-case.sh"
+  exit "$fail"
+fi
+
 # ---------------------------------------------------------------- R0
 echo
 echo "== R0: with Settings up, no drag runs in the pane underneath it =="
@@ -632,11 +777,31 @@ r0_before=$(ipc total)
 aaa_before_r0=$(ls -A "$HOMEDIR/aaa" | tr '\n' ' ')
 printf 's1 payload\n' > "$HOMEDIR/s1.txt"
 expect_ipc total $((r0_before + 1))
-centre_into s1x s1y s1.txt
 centre_into a1x a1y aaa
 native_key -M ctrl -k comma -m ctrl
 expect_ipc settingsOpen true
+# R0 owns ground, so derive its press from the visible row outside the measured card and rail.
+r0_index=$(rowidx s1.txt) || die "R0 could not find s1.txt's row"
+r0_row=$(ipc rowRect "$r0_index") || die "R0 could not read s1.txt's row rectangle"
+r0_card=$(ipc settingsCardRect) || die "R0 could not read Settings' card rectangle"
+r0_area=$(ipc listAreaRect) || die "R0 could not read the listing viewport"
+r0_rail=$(ipc railState) || die "R0 could not read the pane rail"
+r0_point=$(python3 "$repo/tests/lib/settings-ground-point.py" "$r0_row" "$r0_card" "$r0_area" "$r0_rail" "$WIN" "$pointer_tolerance") \
+    || die "R0 has no ground press point over s1.txt outside Settings and the rail, see DRAG_R0_GROUND_REFUSED coordinates"
+read -r s1x s1y <<< "$r0_point"
 warp "$s1x" "$s1y"; sleep 0.4
+# Recheck the card and rail after pointer motion, before any button is held.
+r0_index=$(rowidx s1.txt) || die "R0 could not find s1.txt's row before the press"
+# Sample input: "1234, 567" from hyprctl cursorpos, the comma stripped before read.
+read -r r0_actual_x r0_actual_y <<< "$(hyprctl cursorpos | tr -d ',')"
+python3 "$repo/tests/lib/settings-ground-point.py" "$(ipc rowRect "$r0_index")" "$(ipc settingsCardRect)" \
+    "$(ipc listAreaRect)" "$(ipc railState)" "$WIN" 1 "$r0_actual_x $r0_actual_y" >/dev/null \
+    || die "R0 press point is not on the panel ground, see DRAG_R0_GROUND_REFUSED coordinates"
+r0_folder_index=$(rowidx aaa) || die "R0 could not find aaa's unchanged destination row"
+python3 "$repo/tests/lib/settings-ground-point.py" "$(ipc rowRect "$r0_folder_index")" "$(ipc settingsCardRect)" \
+    "$(ipc listAreaRect)" "$(ipc railState)" "$WIN" 1 "$a1x $a1y" >/dev/null \
+    || die "R0's unchanged aaa destination is not on the panel ground, see DRAG_R0_GROUND_REFUSED coordinates"
+printf 'DRAG_R0_GROUND press=%s,%s observed=%s,%s row=%q card=%q rail=%q destination=%s,%s\n' "$s1x" "$s1y" "$r0_actual_x" "$r0_actual_y" "$r0_row" "$r0_card" "$r0_rail" "$a1x" "$a1y"
 press; sleep 0.3
 glide_to "$a1x" "$a1y"; sleep 0.5
 release; sleep 0.8
@@ -675,6 +840,34 @@ check "and not in the folder it merely crossed" \
       "$([ -e "$HOMEDIR/aaa/r2.txt" ] && echo "aaa STALE" || echo clean)" "clean"
 check "a plain drag is a move, so the source is gone" \
       "$([ -e "$HOMEDIR/r2.txt" ] && echo still-there || echo moved)" "moved"
+
+# ---------------------------------------------------------------- RT
+echo
+echo "== RT: a row dropped on the rail's Trash row goes to the trash =="
+# The rail's Trash row sends dd's trash request by path into this run's own $XDG_DATA_HOME/Trash; the baseline count waits for a settled listing.
+expect_ipc listInFlight false
+rt_before=$(ipc total)
+printf 't1 payload\n' > "$HOMEDIR/t1.txt"
+expect_ipc total $((rt_before + 1))
+trash_index=""
+IFS='|' read -r -a rail_labels <<< "$(ipc railLabels)"
+for i in "${!rail_labels[@]}"; do [ "${rail_labels[$i]}" = Trash ] && trash_index=$i && break; done
+[ -n "$trash_index" ] || die "RT: the rail carries no Trash row: $(ipc railLabels)"
+point=$(ipc railRowCentre "$trash_index")
+[[ "$point" =~ ^[0-9]+\ [0-9]+$ ]] || die "RT: the Trash row has no geometry: $point"
+read -r tx ty <<< "$point"
+centre_into sx sy t1.txt
+warp "$sx" "$sy"; sleep 0.4
+press; sleep 0.3
+glide_to "$((WX + tx))" "$((WY + ty))"; sleep 0.5
+release; sleep 0.4
+wait_for "$HOMEDIR/t1.txt" absent
+check "the dropped file left its folder" \
+      "$([ -e "$HOMEDIR/t1.txt" ] && echo still-there || echo gone)" "gone"
+check "and it is in this run's Trash, not deleted" \
+      "$([ -e "$XDG_DATA_HOME/Trash/files/t1.txt" ] && echo trashed || echo missing)" "trashed"
+expect_ipc total "$rt_before"
+raildrop_case
 
 # ---------------------------------------------------------------- R3
 echo
@@ -873,9 +1066,6 @@ r7_release_settle_seconds=0.5
 r7_stopped_state=T
 # Sample input, /proc/<pid>/stat: '123 (flea) T 1 123 ...'; the owned backend's state is field 3.
 backend_state() { cut -d' ' -f3 "/proc/$BACKEND_PID/stat"; }
-XDEV=$(mktemp -d /dev/shm/flea-drag-xdev-XXXXXX)
-: > "$XDEV/$SANDBOX_MARKER"
-mkdir -p "$XDEV/big"
 check "the tmpfs root is another filesystem than the fixture" \
       "$([ "$(stat -c %d "$XDEV")" != "$(stat -c %d "$HOMEDIR")" ] && echo other || echo same)" "other"
 # Passes once the current tab lists the payload and no listing is out; the in-flight read is the last one before the caller's key.

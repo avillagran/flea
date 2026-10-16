@@ -40,6 +40,15 @@ ShellRoot {
             if (++root.ticks > 350) { root.check(false, "pane timed out at stage " + root.stage); root.finish(); return }
             var p = root.pane, q = root.preview
             if (!p || p.listInFlight || p.listingState !== "ready") return
+            if (q && q.active && q.isFont && !q.advancedFont) {
+                if (q.status === "loading") return
+                root.check(q.status === "font", "real backend draws the isolated quick sample")
+                root.check(q.fontManageControl.visible, "real pane offers management over the upstream sample")
+                root.keys.keyClick(Qt.Key_Tab, Qt.NoModifier, -1)
+                root.check(q.fontManageControl.activeFocus, "Tab reaches font management")
+                root.keys.keyClick(Qt.Key_Return, Qt.NoModifier, -1)
+                return
+            }
             if (root.stage === 0 && p.total === 2) {
                 root.keys = Qt.createQmlObject("import QtTest; TestEvent {}", window.contentItem)
                 p.listArea.forceActiveFocus()

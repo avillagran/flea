@@ -452,13 +452,21 @@ def test_filters():
     filters = [("Images", [(0, "*.png")]), ("Text", [(1, "text/plain")])]
     filtered = Request("SP04-filters", folder=large, filters=GLib.Variant("a(sa(us))", filters), current_filter=GLib.Variant("(sa(us))", filters[0])).opened()
     filtered.until("glob reaches beyond original window", lambda state: state["total"] == 1 and state["cursorName"] == "zz-last.png")
-    filtered.click("Text")
-    filtered.until("MIME filter applies", lambda state: state["total"] == 150)
-    filtered.click("All files")
-    filtered.until("All files restores listing", lambda state: state["total"] == 151)
-    check("SP04 filter chip owns focus", filtered.control("All files")["focused"])
+    # The filter is a dropdown in the answer row: Return opens its menu on the current filter, Down moves, Return chooses.
+    filtered.focus_control("Filter")
+    for step, total in (("MIME filter applies", 150), ("All files restores listing", 151)):
+        filtered.key("-k", "Return")
+        filtered.key("-k", "Down")
+        filtered.key("-k", "Return")
+        filtered.until(step, lambda state, total=total: state["total"] == total)
+    check("SP04 filter trigger owns focus", filtered.control("Filter")["focused"])
+    # Tab runs top to bottom, left to right: chrome, rail, listing, then the answer row's Filter, Cancel, Open, and round to the chrome again.
+    live = {item["name"]: item["enabled"] for item in filtered.state()["controls"]}
+    for name in [name for name in ("Cancel", "Open", "Back", "Parent folder") if live[name]]:
+        filtered.key("-k", "Tab")
+        filtered.until(f"Tab reaches {name}", lambda state, name=name: any(item["name"] == name and item["focused"] for item in state["controls"]))
     filtered.key("-k", "Tab")
-    filtered.until("Tab leaves filters for rail", lambda state: state["railFocus"])
+    filtered.until("Tab reaches the rail", lambda state: state["railFocus"])
     filtered.key("-k", "Tab")
     filtered.until("Tab enters listing", lambda state: state["listFocus"])
     filtered.key("-k", "End")
@@ -514,9 +522,11 @@ def test_save():
     save.key("-M", "ctrl", "-k", "a", "-m", "ctrl", "zz-last.png")
     save.until("collision review restored", lambda state: state["saveReady"] and state["collision"])
     save.key("-k", "Return")
-    save.until("collision Enter focuses Cancel", lambda state: any(control["name"] == "Cancel" and control["focused"] for control in state["controls"]))
+    save.until("collision Enter returns to Filename and the answer reads Replace", lambda state: state["collisionReview"]
+                and any(control["name"] == "Filename" and control["focused"] for control in state["controls"])
+                and any(control["name"] == "Replace" for control in state["controls"]))
     save.capture("collision")
-    save.click("Use this location")
+    save.click("Replace")
     save.answered(0, [(large / "zz-last.png").as_uri()])
     check("SP07 picker did not overwrite", (large / "zz-last.png").read_text() == "image")
     write(large / "zz-last.png", "caller write")
@@ -527,6 +537,29 @@ def test_save():
     absent.click("Save")
     absent.answered(0, [(fixture / "new.txt").as_uri()])
     check("SP07 SaveFile created nothing", not (fixture / "new.txt").exists())
+
+
+def test_savefocus():
+    saving = Request("SP07-save-focus", "SaveFile", current_name=GLib.Variant("s", "report.pdf")).opened()
+    before = saving.until("fresh save ready with a folder first", lambda state: state["saveReady"]
+                          and state["rows"] and state["rows"][0]["n"] == "folder")
+    check("fresh save focuses Filename and leaves the listing unfocused",
+          any(item["name"] == "Filename" and item["focused"] for item in before["controls"])
+          and not before["listFocus"] and not before["gridFocus"], before)
+    saving.capture("fresh")
+    saving.key("-k", "Return")
+    saving.answered(0, [(fixture / "report.pdf").as_uri()])
+    check("fresh Enter records the caller reply without creating a file",
+          (root / "response-SP07-save-focus.json").is_file() and not (fixture / "report.pdf").exists())
+
+    moved = Request("SP07-save-focus-up", "SaveFile", folder=fixture / "folder",
+                    current_name=GLib.Variant("s", "report.pdf")).opened()
+    moved.until("initial save destination ready", lambda state: state["saveReady"])
+    moved.click("Parent folder")
+    moved.until("pointer Up returns Filename focus in the shown folder", lambda state: state["path"] == str(fixture)
+                and state["saveReady"] and any(item["name"] == "Filename" and item["focused"] for item in state["controls"]))
+    moved.key("-k", "Return")
+    moved.answered(0, [(fixture / "report.pdf").as_uri()])
 
 
 def test_cancel():
@@ -638,49 +671,27 @@ def test_keys():
     for size in [9, 10, 11, 12, 14, 16, 20]:
         write(state_file, json.dumps({"display": {"textSize": {"mode": size}}}))
         small = Request(f"SP10-size-{size}", "SaveFile", current_name=GLib.Variant("s", "beta.txt")).opened()
-        small.until("collision review ready", lambda state: state["saveReady"] and state["collision"])
+        small.until("save ready", lambda state: state["saveReady"] and state["collision"])
         small.resize(420, 280)
         state = small.state()
         check(f"SP10 size {size} listing remains inside viewport", state["geometry"]["list"] >= 0 and state["geometry"]["save"] >= 0, state["geometry"])
         small.capture("small")
-        initial_scroll = state["geometry"]["saveScroll"]
-        use_bounds = small.control("Use this location")["bounds"]
-        viewport = state["geometry"]["saveViewport"]
-        lower_clipped = use_bounds[1] + use_bounds[3] > viewport[1] + viewport[3]
         small.focus_control("Filename")
         small.revealed("Filename")
-        small.focus_control("Saves to")
-        small.revealed("Saves to")
-        small.key("-k", "End")
-        uri = small.until("End reveals the Output URI tail", lambda state: state["outputUri"]["offset"] == state["outputUri"]["maximum"])
-        check(f"SP10 size {size} Output URI identity unchanged", uri["outputUri"]["text"] == (fixture / "beta.txt").as_uri(), uri["outputUri"])
-        small.capture("uri-end")
-        small.key("-k", "Home")
-        small.until("Home restores the Output URI prefix", lambda state: state["outputUri"]["offset"] == 0)
-        if uri["outputUri"]["maximum"] > 0:
-            small.key("-k", "Right")
-            small.until("Right pans the Output URI", lambda state: 0 < state["outputUri"]["offset"] <= state["outputUri"]["maximum"])
-            small.key("-k", "Left")
-            small.until("Left restores the Output URI prefix", lambda state: state["outputUri"]["offset"] == 0)
-            small.click("Saves to")
-            small.until("pointer focuses Output URI", lambda state: small.control("Saves to")["focused"])
-            small.window()
-            drive("scroll", "right", "1")
-            small.until("horizontal wheel pans Output URI", lambda state: state["outputUri"]["offset"] > 0)
-            small.key("-k", "Home")
-            small.until("Home restores URI after wheel input", lambda state: state["outputUri"]["offset"] == 0)
-        small.focus_control("Cancel")
-        small.revealed("Cancel")
-        small.focus_control("Use this location")
-        revealed = small.revealed("Use this location")
-        if lower_clipped:
-            check(f"SP10 size {size} native focus scrolls clipped collision controls into view",
-                  revealed["geometry"]["saveScroll"] > initial_scroll, [initial_scroll, revealed["geometry"]["saveScroll"]])
+        small.key("-k", "Return")
+        small.until("collision review ready", lambda state: state["collisionReview"] and any(control["name"] == "Replace" for control in state["controls"]))
+        small.revealed("Filename")
         small.capture("collision-focus")
-        for target in ["Cancel", "Saves to", "Filename"]:
+        for target in ["Cancel", "Replace"]:
+            state = small.focus_control(target)
+            x, y, width, height = small.control(target)["bounds"]
+            check(f"SP10 size {size} focused {target} is fully inside the window above the footer",
+                  0 <= x and 0 <= y and x + width <= state["width"]
+                  and y + height <= state["height"] - state["geometry"]["footer"], state["geometry"])
+        for target in ["Cancel", "Filename"]:
             small.key("-M", "shift", "-k", "Tab", "-m", "shift")
             small.until(f"Shift Tab restores {target}", lambda state: small.control(target)["focused"])
-            small.revealed(target)
+        small.revealed("Filename")
         small.cancel()
 
 
@@ -855,6 +866,8 @@ def test_sorting():
     # a3c7508f6: SP12's last sort is the default now, so the save opens on size descending and s steps to modified.
     saving.until("the collision is reviewed", lambda state: state["saveReady"] and state["collision"] and state["state"] == "ready"
                  and state["sortBy"] == "size" and state["sortDesc"])
+    saving.key("-M", "shift", "-k", "Tab", "-m", "shift")
+    saving.until("deliberate list focus before sorting", lambda state: state["listFocus"])
     saving.key("s")
     saving.until("a sort keeps the filename and its collision answer", lambda state: state["sortBy"] == "mtime" and not state["sortDesc"]
                  and state["state"] == "ready" and state["saveName"] == "report.txt" and state["saveReady"] and state["collision"])
@@ -1108,11 +1121,13 @@ def take_display_lock(runtime_dir):
 
 
 def main():
+    from picker_issue313_native import test_issue313
     groups = {"single": test_single, "multiple": test_multiple, "directory": test_directory,
               "filters": test_filters, "changed": test_changed, "save": test_save,
-              "cancel": test_cancel, "failure": test_failure, "keys": test_keys,
+              "savefocus": test_savefocus, "cancel": test_cancel, "failure": test_failure, "keys": test_keys,
               "sorting": test_sorting, "path": test_path}
-    selected = sys.argv[1:] or list(groups)
+    groups["issue313"] = lambda: test_issue313(globals())
+    selected = sys.argv[1:] or [name for name in groups if name != "issue313"]
     for name in selected:
         if name not in groups:
             raise AssertionError("unknown picker group: " + name)

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # Every fence in a Markdown file opens as a code block in the preview column and in Quick Look, whatever the line endings, the size or where the entry came from.
 set -uo pipefail
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
@@ -14,7 +15,7 @@ trap cleanup EXIT
 mkdir -p "$test_root"/{config,fixture,home,state/flea,cache,runtime} || exit 1
 chmod 700 "$test_root/runtime" || exit 1
 printf '{}\n' > "$test_root/state/flea/ui.json"
-ln -s "$(readlink -m ui/boot/Commons)" "$test_root/config/Commons" || exit 1
+headless_commons "$test_root" || exit 1
 ln -s "$(readlink -m ui/boot/Ui)" "$test_root/config/Ui" || exit 1
 ln -s "$PWD/ui" "$test_root/config/flea" || exit 1
 cp tests/fencehosts.js "$test_root/config/fencehosts.js" || exit 1
@@ -72,9 +73,13 @@ def sized(size, end):
 for size in (65535, 65537):
     for kind, end in (("lf", "\n"), ("crlf", "\r\n"), ("cr", "\r")):
         open("%s/syn-size%s-%d.md" % (out, kind, size), "w", newline="").write(sized(size, end))
+# The Markdown preview's byte limit, previewLimitBytes in tests/fencehosts.qml: one document at it, one past it.
+preview_limit = 1048576
+for size in (preview_limit, preview_limit + 1):
+    open("%s/syn-limit-%d.md" % (out, size), "w", newline="").write(sized(size, "\n"))
 PY
 docs=$(cd "$test_root/fixture" && for f in *.md; do printf '%s|%s\n' "$f" "$(stat -c %s "$f")"; done)
-# A ceiling for the whole run: 73 documents, each drawn in three hosts.
+# A ceiling for the whole run, with every document drawn or explicitly refused in three hosts.
 readonly qs_limit_seconds=300
 log="$test_root/run.log"
 ( env -u DISPLAY -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \

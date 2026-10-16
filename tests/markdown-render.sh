@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # The real ui/PreviewMarkdown.qml over a fixture document, grabbed offscreen and judged on pixel facts: the chrome chip behind inline code, the table's rules without verticals, no Qt default link blue, and the quote bar's muted ink.
 set -u
 script_path=$(readlink -f -- "$0") || exit 1
@@ -67,9 +68,9 @@ mkdir -p "$test_root/config" "$test_root/home" "$test_root/state" "$test_root/ca
 chmod 700 "$test_root/runtime" || exit 1
 # The probe imports ui/ as Flea, and ui/'s qs.Commons resolves against this root, as it does from ui/boot.
 ln -s "$PWD/ui" "$test_root/config/flea" || exit 1
-ln -s "$(readlink -f ui/boot/Commons)" "$test_root/config/Commons" || exit 1
+headless_commons "$test_root" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$test_root/config/Ui" || exit 1
-cp tests/markdown-render.js tests/markdown-centre.js tests/markdown-board.js tests/markdown-bar.js "$test_root/config/" || exit 1
+cp tests/markdown-render.js tests/markdown-centre.js tests/markdown-board.js tests/markdown-bar.js tests/markdown-mark.js "$test_root/config/" || exit 1
 cp tests/markdown-render.qml "$test_root/config/shell.qml" || exit 1
 
 cat > "$test_root/notes.md" <<'EOF'
@@ -116,6 +117,9 @@ output=$( ( env -u DISPLAY -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \
     timeout 60 qs -p "$test_root/config" 2>&1 ) 2>/dev/null )
 
 # Sample input, the verdict line: "  INFO qml: MARKDOWN_RENDER PASS chip, rules, bar and links all read"
+if [ -n "${FLEA_CI_SUITE_LOGS:-}" ]; then
+    printf '%s\n' "$output" > "$FLEA_CI_SUITE_LOGS/markdown-render-ui.log"
+fi
 if [ "$(printf '%s\n' "$output" | grep -c 'MARKDOWN_RENDER PASS')" -ne 1 ] || printf '%s\n' "$output" | grep -q 'MARKDOWN_RENDER FAIL'; then
     printf 'FAIL the rendered preview missed a pixel fact\n'
     printf '%s\n' "$output" | grep -aE 'MARKDOWN_RENDER|ERROR|error'

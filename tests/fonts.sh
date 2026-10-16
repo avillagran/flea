@@ -2,18 +2,21 @@
 # Real font install/uninstall under isolated user roots, followed by the shipped Quick Look and actual QML controls offscreen.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-for tool in qs fc-match fc-list fc-scan fc-cache timeout python3; do
+. tools/flea-sandbox-guard
+. tests/headless-commons.sh
+for tool in qs fc-match fc-list fc-scan fc-cache timeout python3 magick bwrap; do
     command -v "$tool" >/dev/null || { echo "FAIL fonts: missing $tool"; exit 1; }
 done
 python3 tests/font-management.py
 python3 tests/font-defaults.py
-scratch=$(mktemp -d)
-trap 'rm -rf "$scratch"' EXIT
+scratch="$FIXTURE_ROOT/flea-fonts-$$"
+sandbox_make "$scratch"
+trap 'sandbox_remove "$scratch"' EXIT
 mkdir -p "$scratch"/{config,home,data,cache,state,runtime}
 chmod 700 "$scratch/runtime"
 python3 tests/font-formats.py "$scratch"
 ln -s "$PWD/ui" "$scratch/config/flea"
-ln -s "$PWD/ui/boot/Commons" "$scratch/config/Commons"
+headless_commons "$scratch"
 ln -s "$PWD/ui/boot/Ui" "$scratch/config/Ui"
 cp tests/font-preview.qml "$scratch/config/shell.qml"
 cp "$(fc-match -f '%{file}')" "$scratch/a # font.ttf"

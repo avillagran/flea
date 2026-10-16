@@ -24,7 +24,7 @@ use crate::backend::state::{Held, State, Tables};
 use crate::backend::searchreq::{collapse_query_burst, emit_session_answer, finish_search, is_search_query_line,
     op_tag_paths, op_write_paths, searchclosed_line, searchopened_line, step_search};
 use crate::backend::thumbcache::{default_root, Cache};
-use crate::backend::thumbreq::{cancel_row, forget_one, report_done, thumb_rows};
+use crate::backend::thumbreq::{cancel_all, cancel_row, report_done, thumb_rows};
 use crate::backend::thumbs::{Done, Pool};
 use crate::backend::thumbwrite::sweep_own_temps;
 use crate::backend::unmount::leave_mount;
@@ -174,7 +174,7 @@ fn dispatch<W: Write>(event: Event, out: &mut W, st: &mut State, tb: &Tables, po
                 return Control::Quit;
             }
         }
-        Event::Thumb(d) => report_done(out, st, d),
+        Event::Thumb(d) => report_done(out, st, pool, d),
         Event::Flash(m) => flash.report(out, &m),
         Event::DirSize(d) => report_dirsize(out, st, d),
         // A slow mount's figures, printed only for the directory on screen now.
@@ -516,13 +516,10 @@ fn handle_line(
         }
         Request::ThumbCancel { rows } => {
             if rows.is_empty() {
-                // An empty rows cancels everything queued, and every job it drops has to leave the map with it; see AGENTS.md "Thumbnail requests".
-                for job in pool.cancel_all() {
-                    forget_one(st, &job.path);
-                }
+                cancel_all(st, pool);
             } else {
                 for row in &rows {
-                    cancel_row(st, pool, *row);
+                    cancel_row(out, st, pool, *row);
                 }
             }
         }
@@ -611,6 +608,8 @@ fn handle_line(
         Request::PdfCopy { id, slot, path } => {
             super::pdfcopy::spawn(id, slot, PathBuf::from(&path), ops.tx.clone());
         }
+        Request::OfficePdf { id, path } => super::officepdf::serve(out, ops, &tb.mime, &tb.aliases, id, &path),
+        Request::FontLook(ask) => super::fontinfo::render::spawn(ask, Arc::clone(&tb.mime), Arc::clone(&tb.aliases), ops.tx.clone()),
         // One row, only when a client asked: the same no-sweep rule thumb and dirsize already follow.
         Request::Meta { row, text, media, archive, token } => {
             if row < st.listing.len() {
@@ -622,6 +621,11 @@ fn handle_line(
         Request::Shebang { path, id } => {
             super::shebang::spawn(PathBuf::from(&path), id, ops.tx.clone())
         }
+        // Answered on a thread, since bat runs in a jail and a read on a hung mount never returns.
+        Request::Code(ask) => super::codereq::spawn(ask, ops.tx.clone()),
+        Request::Html(ask) => super::htmlreq::spawn(ask, ops.tx.clone()),
+        // Answered on a thread: diff runs in a jail and a read on a hung mount never returns.
+        Request::Compare(ask) => super::compare::spawn(ask, ops.tx.clone()),
         tags @ (Request::SetTags { .. } | Request::TagStates { .. }) => {
             let written = super::tagsreq::handle(out, ops, st, tags);
             note_tag_writes(st, &written);
@@ -649,7 +653,7 @@ fn handle_line(
             say(out, &super::proto::located_many_line(&st.base.to_string_lossy(), id, transfer_id, &matches, error.as_deref()));
         }
         Request::Jump { id, ranking, favourites, recent } => super::jump::request(id, ranking, favourites, recent, ops.tx.clone()),
-        Request::Devs { paths } => super::devsreq::request(paths, ops.tx.clone()),
+        Request::Devs { paths, id } => super::devsreq::request(paths, id, ops.tx.clone()),
         Request::Flash(req) => flashop::request(out, flash, req),
         Request::Quit => return Control::Quit,
         // corner: an unrecognised line is answered with silence, see AGENTS.md.
@@ -720,9 +724,14 @@ fn rows_needed(request: &Request) -> usize {
         | Request::PasteImage(_) => 0,
         // Lines, dialogs and the clipboard name paths or nothing, never a row index.
         Request::Shebang { .. }
+        | Request::Code(_)
+        | Request::Html(_)
+        | Request::Compare(_)
         | Request::FsInfo
         | Request::Peek { .. }
         | Request::PdfCopy { .. }
+        | Request::OfficePdf { .. }
+        | Request::FontLook(_)
         | Request::Formats { .. }
         | Request::Permissions { .. }
         | Request::Picker { .. }
@@ -781,7 +790,7 @@ fn on_search_walked(out: &mut impl Write, st: &mut State, tb: &Tables, pool: &Po
 // A new row order invalidates every outstanding index, so the queue goes and no result can be reported against the new listing.
 pub fn forget_rows(st: &mut State, pool: &Pool) {
     st.generation += 1;
-    st.outstanding = st.outstanding.saturating_sub(pool.cancel_all().len());
+    st.outstanding = st.outstanding.saturating_sub(pool.cancel_all().len() + st.deferred.take_all().len());
     st.asked.clear();
     st.window_meta.clear();
     // A list or a sort changes which row an index names, the same reason thumbnails clear their map.
@@ -864,7 +873,7 @@ pub(crate) fn drain(
     // A trash batch past its announce has freed the slot but still owes its journal entry, so the drain waits for it too.
     while st.outstanding > 0 || ops.live.running().is_some() || !ops.settling.is_empty() || !ops.detached.is_empty() || flash.slot.running().is_some() {
         match rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
-            Ok(Event::Thumb(d)) => report_done(out, st, d),
+            Ok(Event::Thumb(d)) => report_done(out, st, pool, d),
             Ok(Event::Op(m)) => report_op(out, ops, m),
             Ok(Event::Flash(m)) => flash.report(out, &m),
             Ok(_) => {}

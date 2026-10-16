@@ -97,11 +97,53 @@ function lineCount(meta) {
     return (meta.partial ? "> " : "") + Format.count(meta.lines)
 }
 
+// A frame header's size wins; a camera RAW has none, so the sensor size in its photo facts stands in.
 function pixels(meta) {
-    if (!meta || !meta.w || !meta.h) {
-        return ""
+    var size = meta && meta.w && meta.h ? meta : (meta && meta.photo ? meta.photo : null)
+    return size && size.w && size.h ? "%1 × %2".arg(size.w).arg(size.h) : ""
+}
+
+function tenths(value) {
+    return String(Math.round(value * 10) / 10)
+}
+
+// Sample input: a numerator and denominator as [1, 250]; zero on either side is no value.
+function ratio(pair) {
+    return pair && pair[0] > 0 && pair[1] > 0 ? pair[0] / pair[1] : 0
+}
+
+// Sample input, the backend's photo object: {make, model, lens, exp: [1, 250], fnum: [28, 10], iso: 400, focal: [35, 1], taken: "2026:09:12 18:31:00"}.
+// Answers the five worded facts; an absent one is an empty string, which draws no row.
+function photoFacts(photo) {
+    var p = photo || {}
+    var seconds = ratio(p.exp)
+    var parts = []
+    if (seconds > 0) {
+        // The way a camera shows it: 1/N under 0.3 s, one-place seconds from there on.
+        parts.push(seconds < 0.3 ? "1/%1 s".arg(Math.round(p.exp[1] / p.exp[0])) : "%1 s".arg(tenths(seconds)))
     }
-    return meta.w + " × " + meta.h
+    if (ratio(p.fnum) > 0) {
+        parts.push("f/%1".arg(tenths(ratio(p.fnum))))
+    }
+    if (p.iso > 0) {
+        parts.push("ISO %1".arg(p.iso))
+    }
+    var make = p.make || ""
+    var model = p.model || ""
+    var owned = make.length > 0 && model.toLowerCase().indexOf(make.split(" ")[0].toLowerCase()) === 0
+    var stamp = /^(\d{4}):(\d\d):(\d\d) (\d\d):(\d\d)/.exec(p.taken || "")
+    return {
+        camera: owned || !make ? model : (model ? "%1 %2".arg(make).arg(model) : make),
+        lens: p.lens || "",
+        exposure: parts.join(FACT_SEP),
+        focal: ratio(p.focal) > 0 ? "%1 mm".arg(Math.round(ratio(p.focal))) : "",
+        taken: stamp && stamp[1] !== "0000" ? "%1-%2-%3 %4:%5".arg(stamp[1]).arg(stamp[2]).arg(stamp[3]).arg(stamp[4]).arg(stamp[5]) : ""
+    }
+}
+
+// An animated GIF's frame count; a still picture, or a GIF whose walk found no count, states none.
+function frames(meta) {
+    return meta && meta.frames > 1 ? String(meta.frames) : ""
 }
 
 // Duration and rate come off the same meta answer as pixels do, so no caller assembles them by hand.
@@ -128,6 +170,8 @@ function archiveExtra(meta) {
     }
 }
 
+var FACT_SEP = " \u00b7 "
+
 // "214 entries · 3.4 GB unpacked", the Quick Look's one line under an archive's name; the column
 // states the same two facts as table rows, and an index that failed or is still arriving states nothing.
 function archiveLine(meta) {
@@ -137,7 +181,7 @@ function archiveLine(meta) {
         return meta && meta.archiveFailed !== true && meta.entries === 0 ? "0 entries" : ""
     }
     var noun = a.entries === "1" ? " entry" : " entries"
-    return a.unpacked ? a.entries + noun + " \u00b7 " + a.unpacked + " unpacked" : a.entries + noun
+    return a.unpacked ? a.entries + noun + FACT_SEP + a.unpacked + " unpacked" : a.entries + noun
 }
 
 // The rows the Archive tile lists above its "+ N more" line, which is the only place a name from
@@ -157,6 +201,63 @@ function archiveMore(meta, shown) {
         return 0
     }
     return Math.max(0, meta.entries - archiveEntries(meta, shown).length)
+}
+
+// TallPreviews: the kinds whose frame fills the column down to the name, by the row's kind and never its load state.
+var TALL_STATES = [TEXT, CODE, ARCHIVE, PDF, FONT]
+
+function tall(st) {
+    return TALL_STATES.indexOf(st) >= 0
+}
+
+// The tall frame is the column less its margins, the name, the facts and the two gaps between them.
+function tallHeight(columnHeight, margin, nameHeight, factsHeight, gap) {
+    return Math.max(0, columnHeight - 2 * margin - nameHeight - factsHeight - 2 * gap)
+}
+
+var COMPACT_LINE = "%1 \u00b7 %2 \u00b7 %3"
+var COMPACT_BARE = "%1 \u00b7 %2"
+var LEADING_SEPARATOR = /^ \u00b7 /
+var LINES_ONE = "1 line"
+var LINES_MANY = "%1 lines"
+var ENTRIES_ONE = "1 entry"
+var ENTRIES_MANY = "%1 entries"
+var PAGES_ONE = "1 page"
+var PAGES_MANY = "%1 pages"
+
+// One pass, so a value that looks like a placeholder is kept whole.
+function fill(template, values) {
+    return template.replace(/%(\d)/g, function (whole, place) { return values[place - 1] })
+}
+
+// "132 lines", "214 entries" or "12 pages"; nothing while the count is not known, and a floor keeps its mark.
+function compactCount(st, meta, extra) {
+    if (st === PDF) {
+        var pages = Number(extra && extra.pages)
+        return pages === 1 ? PAGES_ONE : pages > 1 ? fill(PAGES_MANY, [Format.count(pages)]) : ""
+    }
+    if (st === ARCHIVE) {
+        if (!meta || meta.archiveFailed === true || meta.entries === undefined) {
+            return ""
+        }
+        return meta.entries === 1 ? ENTRIES_ONE : fill(ENTRIES_MANY, [Format.count(meta.entries)])
+    }
+    var shown = lineCount(meta)
+    if (shown.length === 0) {
+        return ""
+    }
+    return meta.lines === 1 && !meta.partial ? LINES_ONE : fill(LINES_MANY, [shown])
+}
+
+// The tall kinds' one facts line, the Kind then the size then the count; the Kind comes apart from the tail so the Kind alone can elide.
+function compactLine(st, row, meta, kindName, extra) {
+    if (!row) {
+        return { kind: "", tail: "" }
+    }
+    var count = compactCount(st, meta, extra)
+    var line = fill(count ? COMPACT_LINE : COMPACT_BARE, [kindName, Format.size(row.s), count])
+    var tail = line.substring(kindName.length)
+    return { kind: kindName, tail: kindName ? tail : tail.replace(LEADING_SEPARATOR, "") }
 }
 
 // The rows the canvas draws for each state, in its own order, with the labels it uses verbatim.
@@ -179,7 +280,10 @@ function stateRows(st, row, meta, kindName, extra) {
                 pair("Modified", Format.date(row.m))]
     switch (st) {
     case IMAGE:
-        return head.concat([pair("Pixels", pixels(meta))])
+        // Raw.html: a camera file's EXIF facts sit between Modified and Pixels, and Taken closes the table.
+        var photo = photoFacts(meta && meta.photo)
+        return head.concat([pair("Camera", photo.camera), pair("Lens", photo.lens), pair("Exposure", photo.exposure),
+                            pair("Focal", photo.focal), pair("Pixels", pixels(meta)), pair("Frames", frames(meta)), pair("Taken", photo.taken)])
     case VIDEO:
         return head.concat([pair("Duration", e.duration || ""), pair("Pixels", pixels(meta))])
     case AUDIO:

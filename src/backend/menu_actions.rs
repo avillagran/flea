@@ -210,7 +210,8 @@ impl Snapshot {
                     self.cursor = cursor.map(Selected::inspect).transpose()?;
                     self.items = items;
                     self.id = id;
-                    Ok(format!(r#""count":{}"#, self.items.len()))
+                    let kinds = self.items.iter().map(|item| item.kind.to_string()).collect::<Vec<_>>().join(",");
+                    Ok(format!(r#""count":{},"kinds":[{}]"#, self.items.len(), kinds))
                 })
             }
         } else if op == "close" {
@@ -278,7 +279,7 @@ impl Snapshot {
                 cursor.current()?;
                 return Ok(format!(r#""action":"{}","paths":["{}"]"#, escape(&action), escape(&cursor.path.to_string_lossy())));
             }
-            let needs_paths = op == "validate" || matches!(action.as_str(), "copy" | "cut" | "copypath" | "copyAs" | "copyPath" | "copyName" | "copyStem" | "copydirpath" | "copyUri" | "copyQuoted" | "showOriginal" | "makeExecutable" | "pasteAs" | "pasteLink" | "pasteAbsoluteLink" | "pasteHardLink" | "addFavourite" | "localsend") || action.starts_with("compress:") || action.starts_with("runScript:") || action.starts_with("localsend:") || action.starts_with("copyAs:") || action.starts_with("pasteAs:");
+            let needs_paths = op == "validate" || matches!(action.as_str(), "copy" | "cut" | "compare" | "copypath" | "copyAs" | "copyPath" | "copyName" | "copyStem" | "copydirpath" | "copyUri" | "copyQuoted" | "showOriginal" | "makeExecutable" | "pasteAs" | "pasteLink" | "pasteAbsoluteLink" | "pasteHardLink" | "addFavourite" | "localsend") || action.starts_with("compress:") || action.starts_with("runScript:") || action.starts_with("localsend:") || action.starts_with("copyAs:") || action.starts_with("pasteAs:");
             let paths: Vec<String> = if needs_paths { self.items.iter().map(|i| format!(r#""{}""#, escape(&i.path.to_string_lossy()))).collect() } else { Vec::new() };
             return Ok(format!(r#""action":"{}","paths":[{}],"dest":"{}""#,
                 escape(&action), paths.join(","),
@@ -294,9 +295,10 @@ impl Snapshot {
                 let target = if meta.file_type().is_symlink() {
                     std::fs::read_link(&item.path).map_err(|e| format!("Could not read the link: {}.", crate::error::io_message(&e)))?.to_string_lossy().to_string()
                 } else { String::new() };
-                Ok(format!(r#""path":"{}","kind":"{}","directory":{},"symlink":{},"target":"{}","bytes":{},"modified":{},"mode":"{:04o}","owner":"{}","uid":{},"gid":{},"tags":{}"#,
+                Ok(format!(r#""path":"{}","kind":"{}","directory":{},"symlink":{},"target":"{}","bytes":{},"modified":{},"mode":"{:04o}","owner":"{}","uid":{},"gid":{},"tags":{},"photo":{}"#,
                     escape(&item.path.to_string_lossy()), kind, meta.is_dir(), meta.file_type().is_symlink(), escape(&target),
-                    meta.len(), meta.mtime(), meta.mode() & 0o7777, escape(&super::owner::name(meta.uid())), meta.uid(), meta.gid(), super::tags::names_json(&item.path)))
+                    meta.len(), meta.mtime(), meta.mode() & 0o7777, escape(&super::owner::name(meta.uid())), meta.uid(), meta.gid(), super::tags::names_json(&item.path),
+                    super::metareq::photo_json(&super::metareq::photo(&item.path, true))))
             }
             "applications" => {
                 let found = menu_registry::catalogue(registry, &item.path, field_bool(line, "installed"), cancel)?;
@@ -649,6 +651,21 @@ mod tests {
         assert_eq!(field_str(&line, "target"), Some(target.to_string_lossy().into()));
         snapshot.handle(r#"{"op":"close","id":9}"#, vec![]);
         assert!(snapshot.handle(r#"{"op":"properties","id":9}"#, vec![]).contains(crate::backend::menu_actions::SELECTION_CHANGED));
+    }
+    #[test]
+    fn properties_carry_a_jpeg_s_photo_facts_and_a_plain_file_carries_none() {
+        let sandbox = TestDir::new("menu-photo");
+        // FFD8, APP1 "Exif\0\0" whose IFD0 holds one Model of "R6", then EOI.
+        let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE1, 0x00, 0x22];
+        jpeg.extend_from_slice(b"Exif\0\0II*\0\x08\0\0\0\x01\0\x10\x01\x02\0\x03\0\0\0R6\0\0\0\0\0\0\xFF\xD9");
+        let photo = sandbox.file("shot.jpg", "");
+        std::fs::write(&photo, jpeg).unwrap();
+        let plain = sandbox.file("notes.txt", "body");
+        let mut snapshot = Snapshot::default();
+        snapshot.handle(r#"{"op":"snapshot","id":4}"#, vec![photo.to_string_lossy().into()]);
+        assert!(snapshot.handle(r#"{"op":"properties","id":4}"#, vec![]).contains(r#""photo":{"model":"R6"}"#));
+        snapshot.handle(r#"{"op":"snapshot","id":5}"#, vec![plain.to_string_lossy().into()]);
+        assert!(snapshot.handle(r#"{"op":"properties","id":5}"#, vec![]).contains(r#""photo":null"#));
     }
 }
 
