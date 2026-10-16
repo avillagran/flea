@@ -62,6 +62,8 @@ ShellRoot {
                 Nav.openCursor(pane, {open: function() { root.check(false, "Enter used foreign opener") }})
                 root.check(opened, "Enter opens font preview")
                 preview.show(root.path, "font-x-generic", 0, "Font", "", -1)
+                root.check(!preview.advancedFont && preview.fontManageControl.visible, "Quick Look starts with the upstream sample and a management control")
+                preview.fontManageControl.activated()
                 root.stage++
             } else if (root.stage === 1 && preview.status === "font" && item && !item.busy) {
                 if (Quickshell.env("FONT_CAPTURE")) item.grabToImage(function(result) { result.saveToFile(Quickshell.env("FONT_CAPTURE")) })
@@ -75,7 +77,7 @@ ShellRoot {
                 item.sampleInput.cursorPosition = 4
                 root.keys.keyClick(Qt.Key_Space, Qt.NoModifier, -1)
                 root.keys.keyClick(Qt.Key_J, Qt.NoModifier, -1)
-                root.check(item.sampleInput.text === "Test j", "Space and j type in sample")
+                root.check(item.sampleInput.text === "Test j", "Space and j type in sample: " + item.sampleInput.text)
                 root.check(preview.active, "typing does not close preview")
                 item.actionItem.activated()
                 root.stage++
@@ -91,6 +93,8 @@ ShellRoot {
             } else if (root.stage === 4) {
                 root.check(preview.fontItem === null, "close releases font viewer")
                 preview.show(root.path, "font-x-generic", 0, "Font", "", -1)
+                root.check(!preview.fontManagement, "reopening restores the isolated quick sample")
+                preview.fontManageControl.activated()
                 root.stage++
             } else if (root.stage === 5 && preview.status === "font" && item && !item.busy) {
                 root.check(!item.fontInfo.installed, "reopen reads uninstalled state")

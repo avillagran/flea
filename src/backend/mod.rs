@@ -9,6 +9,7 @@ pub mod archivepass;
 pub mod archivespec;
 pub mod archivereq;
 pub mod archivework;
+pub mod appicon;
 pub mod mime;
 pub mod fsinfo;
 pub mod fsname;
@@ -49,6 +50,13 @@ pub mod searchhold;
 pub mod searchpatch;
 pub mod answersizes;
 pub mod shebang;
+pub mod sgr;
+pub mod codereq;
+pub mod htmlreq;
+mod htmlcache;
+mod htmldeps;
+mod htmlsandbox;
+pub mod compare;
 pub mod sort;
 pub mod ordering;
 pub mod state;
@@ -59,6 +67,7 @@ pub mod metasort;
 pub mod owner;
 pub mod peek;
 pub mod pdfcopy;
+pub mod officepdf;
 pub mod proto;
 mod providers;
 // Directive 71: the LocalSend row's peers and its send, driven against localsend-cli on a pty.
@@ -97,9 +106,15 @@ pub mod thumbbind;
 pub mod thumbcache;
 pub mod sandbox;
 pub mod jail;
+// The bounded reap kill_tree ends a jail with, so a child the kernel holds never holds a caller; see jail.rs.
+pub mod jailreap;
 pub mod child;
 pub mod thumbs;
 pub mod thumbreq;
+pub mod thumbdefer;
+// Test-only: a request wider than the pool's queue waits for a worker rather than being answered empty.
+#[cfg(test)]
+mod thumbdefer_tests;
 pub mod thumbwrite;
 // The pre-linked video thumbnailer and the backend's link to it; see AGENTS.md "Thumbnail worker".
 pub mod fdpass;
@@ -113,10 +128,13 @@ pub mod mergeapply;
 pub mod fatnames;
 pub mod pasteimage;
 pub mod convert;
+// Quick Look's font page: the facts from the font's tables and the sample job; see src/backend/fontinfo/render.rs.
+pub mod fontinfo;
 pub mod copyfile;
 pub mod copymanifest;
 pub mod manifestdir;
 pub mod copynode;
+mod copyread;
 pub mod unheld;
 pub mod ops;
 pub mod opsname;
@@ -224,5 +242,16 @@ pub mod scanhold;
 // Test-only: keeps the deliberate worker panics quiet without any test swapping the process-wide hook.
 #[cfg(test)]
 pub mod quietpanic;
+// Test-only: holds a child's reap as an uninterruptible sleep would, so kill_tree's bound is pinned.
+#[cfg(test)]
+pub mod reaphold;
 
 pub mod dirsizeworker;
+// The decode-free RAW container walker: the largest embedded JPEG preview plus EXIF facts.
+pub mod rawembed;
+pub mod rawtiff;
+pub mod rawnote;
+pub mod rawbmff;
+pub mod rawraf;
+pub mod rawexif;
+pub mod rawpreview;

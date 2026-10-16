@@ -309,7 +309,71 @@ ShellRoot {
             }
         ]
     }
-    function buildPlan() { shell.plan = shell.folderSteps().concat(shell.otherSteps()).concat(shell.factSteps()) }
+    readonly property var photo: ({make: "Canon", model: "Canon EOS R6", lens: "RF35mm F1.8 MACRO IS STM", exp: [1, 250], fnum: [28, 10], iso: 400, focal: [35, 1], taken: "2026:09:12 18:31:00"})
+    // Properties040: a photo's Camera, Lens, Exposure and Taken sit before Modified, drawn whole in the reply's own frame.
+    function photoSteps() {
+        return [
+            function () {
+                dialog.open("properties", 12, "/fixture", parking)
+                shell.feed(shell.reply({id: 12, path: "/fixture/IMG_0412.CR3", kind: "File", directory: false, bytes: 31200000, photo: shell.photo}))
+                shell.check("a CR3 draws its photo pairs before Modified in the first frame", shell.names(), shell.photoFile)
+                shell.check("and words them as the board does", ["Camera", "Lens", "Exposure", "Taken"].map(shell.line),
+                    ["Canon EOS R6", "RF35mm F1.8 MACRO IS STM", "1/250 s \u00b7 f/2.8 \u00b7 ISO 400", "2026-09-12 18:31"])
+                shell.check("the photo value is foreground at the body size on a muted caption label",
+                    [shell.pair("Camera").color, shell.pair("Camera").font.pixelSize, shell.labelOf("Camera").color, shell.labelOf("Camera").font.pixelSize],
+                    [Flea.Theme.color.foreground, Flea.Theme.font.body, Flea.Theme.color.muted, Flea.Theme.font.caption])
+                shell.feed(shell.factsReply(12, {make: shell.photo.make, model: shell.photo.model, lens: shell.photo.lens, shutter: shell.photo.exp, fnumber: shell.photo.fnum, iso: shell.photo.iso, taken: shell.photo.taken}))
+                shell.check("a deferred facts reply keeps each photo pair once", shell.names(), shell.photoFile)
+                shell.check("equal immediate and deferred facts keep every approved value once", ["Camera", "Lens", "Exposure", "Taken"].map(shell.line),
+                    ["Canon EOS R6", "RF35mm F1.8 MACRO IS STM", "1/250 s \u00b7 f/2.8 \u00b7 ISO 400", "2026-09-12 18:31"])
+                shell.check("a file asks for no count", shell.sent.filter(function (m) { return m.op === "contents" && m.id === 12 }).length, 0)
+            },
+            function () {
+                shell.check("laid out, the photo pairs keep the board's order", shell.drawn(), shell.photoFile)
+                dialog.close()
+            },
+            function () {
+                dialog.open("properties", 13, "/fixture", parking)
+                shell.feed(shell.reply({id: 13, path: "/fixture/shot.png", kind: "File", directory: false, bytes: 2100, photo: null}))
+                shell.check("a PNG draws none of the four", shell.names(), shell.photoFile.filter(function (n) { return ["Camera", "Lens", "Exposure", "Taken"].indexOf(n) < 0 }))
+                dialog.close()
+            },
+            function () {
+                dialog.open("properties", 14, "/fixture", parking)
+                shell.feed(shell.reply({id: 14, path: "/fixture/bare.NEF", kind: "File", directory: false, bytes: 2100, photo: {taken: "2026:09:12 18:31:00", iso: 0}}))
+                shell.check("a photo that names one fact draws that pair only, and nothing reads Unknown", [shell.names(), shell.line("Taken")],
+                    [shell.photoFile.filter(function (n) { return ["Camera", "Lens", "Exposure"].indexOf(n) < 0 }), "2026-09-12 18:31"])
+                shell.feed(shell.factsReply(14, {make: "FUJIFILM", model: "X100V", shutter: [1, 500], iso: 160}))
+                shell.check("deferred facts fill missing photo pairs in board order", shell.names(), ["Path", "Type", "Size", "Camera", "Exposure", "Taken", "Modified", "Permissions", "Owner", "Group"])
+                shell.check("the initial Taken pair survives while missing camera facts arrive", [shell.line("Camera"), shell.line("Exposure"), shell.line("Taken")], ["FUJIFILM X100V", "1/500 s \u00b7 ISO 160", "2026-09-12 18:31"])
+                dialog.close()
+            }
+        ]
+    }
+    function mergedPhotoSteps() {
+        return [function () {
+            var cases = [
+                ["partial ISO", {iso: 400}, {shutter: [1, 250], fnumber: [28, 10], iso: 400},
+                    [["Exposure", "1/250 s \u00b7 f/2.8 \u00b7 ISO 400"]]],
+                ["partial camera", {make: "Canon", iso: 400}, {make: "Canon", model: "Canon EOS R6", shutter: [1, 250], fnumber: [28, 10], iso: 400},
+                    [["Camera", "Canon EOS R6"], ["Exposure", "1/250 s \u00b7 f/2.8 \u00b7 ISO 400"]]],
+                ["complementary fields", {make: "Canon", lens: shell.photo.lens, exp: [1, 250], taken: shell.photo.taken}, {model: "Canon EOS R6", fnumber: [28, 10], iso: 400},
+                    [["Camera", "Canon EOS R6"], ["Lens", shell.photo.lens], ["Exposure", "1/250 s \u00b7 f/2.8 \u00b7 ISO 400"], ["Taken", "2026-09-12 18:31"]]],
+                ["conflicting fields", shell.photo, {make: "SONY", model: "ILCE-7M4", lens: "FE 35mm F1.8", shutter: [1, 500], fnumber: [4, 1], iso: 800, taken: "2026:10:12 09:15:00"},
+                    [["Camera", "SONY ILCE-7M4"], ["Lens", "FE 35mm F1.8"], ["Exposure", "1/500 s \u00b7 f/4 \u00b7 ISO 800"], ["Taken", "2026-10-12 09:15"]]]
+            ]
+            cases.forEach(function (test) {
+                dialog.open("properties", 15, "/fixture", parking)
+                shell.feed(shell.filed(15, "/fixture/shot.CR3", {photo: test[1]}))
+                shell.feed(shell.factsReply(15, test[2]))
+                var observed = ["Camera", "Lens", "Exposure", "Taken"].filter(function (name) { return shell.pair(name) !== null }).map(function (name) { return [name, shell.line(name)] })
+                shell.check(test[0] + " merges photo fields before formatting", observed, test[3])
+                shell.check(test[0] + " draws each pair once in board order", shell.names(), shell.plainFile.slice(0, 3).concat(test[3].map(function (pair) { return pair[0] })).concat(shell.plainFile.slice(3)))
+                dialog.close()
+            })
+        }]
+    }
+    function buildPlan() { shell.plan = shell.folderSteps().concat(shell.otherSteps()).concat(shell.factSteps()).concat(shell.photoSteps()).concat(shell.mergedPhotoSteps()) }
 
     Timer {
         interval: 16

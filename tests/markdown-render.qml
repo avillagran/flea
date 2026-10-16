@@ -1,8 +1,11 @@
 //@ pragma ShellId flea-markdown-render-test
 
 import QtQuick
+import QtTest
 import Quickshell
 import "flea" as Flea
+import "flea/js/Focus.js" as Focus
+import "markdown-mark.js" as Mark
 import "markdown-render.js" as Checks
 import "markdown-centre.js" as Centre
 import "markdown-board.js" as Board
@@ -36,6 +39,10 @@ ShellRoot {
     readonly property int probeColumns: 4
     property int suiteBody: 0
     property bool larger: false
+    // The narrowest Quick Look the bar is held to.
+    readonly property int quickLookMinWidth: 480
+    // What Focus.handleKey reads of a pane while Quick Look is open: the open Quick Look and a listing that owns nothing.
+    readonly property var keyHost: ({ preview: quick, renameEditor: function () { return null } })
 
     FontMetrics { id: listMetrics; font.family: Flea.Theme.font.family; font.pixelSize: Flea.Theme.font.body }
 
@@ -73,7 +80,7 @@ ShellRoot {
     FloatingWindow {
         id: window
         implicitWidth: 560
-        implicitHeight: 1120
+        implicitHeight: 1560
         color: "#101315"
 
         Item {
@@ -172,6 +179,17 @@ ShellRoot {
             view: "rendered"
         }
 
+        // The bar without its segment, as a code or text pane draws it, over a name too long for it; shown beside the grab, because an item reports its effective visibility.
+        Flea.QuickLookBar {
+            id: plainBar
+            x: window.implicitWidth
+            y: colMd.height
+            width: 900
+            markName: "markdown"
+            name: shell.longFixture.substring(shell.longFixture.lastIndexOf("/") + 1)
+            countLabel: "12 lines"
+        }
+
         // A name too long for any bar, so it elides and the room the name may take is tested.
         Flea.MarkdownPane {
             id: longNamePane
@@ -182,6 +200,31 @@ ShellRoot {
             path: shell.longFixture
             size: 1
         }
+
+        // Quick Look itself, open on the fixture under the grab: a bar click and the r and Tab keys reach its pane through ui/Preview.qml's own wiring.
+        Item {
+            id: quickHost
+            y: grabRoot.height
+            width: shell.quickLookMinWidth
+            height: window.implicitHeight - grabRoot.height
+
+            Flea.Preview {
+                id: quick
+                active: true
+                kind: "text"
+                path: shell.fixture
+                size: 1
+            }
+        }
+
+        // The key sink the window's Pane is: its Keys.onPressed hands the event to Focus.handleKey.
+        Item {
+            id: keySink
+            focus: true
+            Keys.onPressed: function (event) { event.accepted = Focus.handleKey(event, shell.keyHost, null) }
+        }
+
+        TestEvent { id: events }
 
         Flea.MarkdownFigure {
             id: fallbackProbe
@@ -353,10 +396,62 @@ ShellRoot {
         var qlFence = pane.blockItem ? Checks.fenceOf(pane.blockItem(shell.blockIndex("fence"))) : null
         shell.check(Checks.surfaceError(qlFence, String(Flea.Theme.color.background), String(Flea.Theme.color.surface)), "Quick Look fence surface")
         var g = pane.barGeometry ? pane.barGeometry() : null
-        shell.check(Bar.barError(g, { chromeMark: Flea.Theme.chromeMarkSize, padX: Flea.Theme.spacing.rowPaddingX,
-            gap: Flea.Theme.spacing.gap, chromeHeight: Flea.Theme.chromeHeight }), "Quick Look bar order")
-        shell.check(Bar.nameRoomError(longNamePane.barGeometry ? longNamePane.barGeometry() : null,
-            { gap: Flea.Theme.spacing.gap }), "Quick Look name takes the freed room")
+        var tokens = shell.barTokens()
+        shell.check(Bar.barError(g, tokens), "Quick Look bar order")
+        shell.check(Bar.pressError(g.bar, g.close), "Quick Look close is the only bar control")
+        shell.check(Bar.nameRoomError(longNamePane.barGeometry ? longNamePane.barGeometry() : null, tokens), "Quick Look name takes the freed room")
+        shell.check(Mark.visibilityControlError(plainBar.geometry(), tokens,
+            function (g, t) { return Bar.plainBarChecks(g, longNamePane.barGeometry(), t) }), "Quick Look bar without the segment keeps its count one gap before close")
+        shell.barSqueezed(tokens)
+        shell.barDriven(tokens)
+    }
+
+    // The tokens the bar is drawn from, read live so the larger text size is judged against its own numbers.
+    function barTokens() {
+        return { chromeMark: Flea.Theme.chromeMarkSize, padX: Flea.Theme.spacing.rowPaddingX, gap: Flea.Theme.spacing.gap,
+            chromeHeight: Flea.Theme.chromeHeight, controlHeight: Flea.Theme.chromeControlHeight, hairline: Flea.Theme.spacing.hairline,
+            caption: Flea.Theme.font.caption,
+            foreground: String(Flea.Theme.color.foreground), muted: String(Flea.Theme.color.muted) }
+    }
+
+    // At 480 px the long name elides; below that the count hides before close moves.
+    function barSqueezed(tokens) {
+        var was = Bar.fixedSizes(longNamePane.barGeometry())
+        var wide = longNamePane.width
+        longNamePane.width = shell.quickLookMinWidth
+        shell.check(Bar.squeezeError(was, longNamePane.barGeometry(), tokens, false) || Bar.nameRoomError(longNamePane.barGeometry(), tokens),
+            "Quick Look bar at " + shell.quickLookMinWidth + " px keeps close clear of the name")
+        longNamePane.width = Bar.hidingWidth(was, tokens)
+        shell.check(Bar.squeezeError(was, longNamePane.barGeometry(), tokens, true), "Quick Look bar hides the count before it moves close")
+        longNamePane.width = wide
+    }
+
+    // Plain labels cannot flip a view; r flips only the body, and Tab visits close alone.
+    function barDriven(tokens) {
+        var shown = quick.markdownShown
+        var g = shown.barGeometry()
+        keySink.forceActiveFocus()
+        function reads(view, name) {
+            var why = shown.shownView === view ? Bar.barError(shown.barGeometry(), tokens)
+                : "the body shows " + shown.shownView + ", want " + view
+            shell.check(why, name)
+        }
+        reads("rendered", "Quick Look starts rendered with no view control")
+        events.mouseClick(g.name, g.name.width / 2, g.name.height / 2, Qt.LeftButton, Qt.NoModifier, 0)
+        reads("rendered", "a click on the filename keeps rendered")
+        events.mouseClick(g.lines, g.lines.width / 2, g.lines.height / 2, Qt.LeftButton, Qt.NoModifier, 0)
+        reads("rendered", "a click on the count keeps rendered")
+        events.keyClickChar("r", Qt.NoModifier, -1)
+        reads("source", "r flips the body to Source and adds no bar control")
+        events.keyClickChar("r", Qt.NoModifier, -1)
+        reads("rendered", "r returns the body to rendered and adds no bar control")
+        var rest = quick.markdownCloseFocused || shown.closeState().focused
+        events.keyClick(Qt.Key_Tab, Qt.NoModifier, -1)
+        var onClose = quick.markdownCloseFocused && shown.closeState().focused && shown.barGeometry().close.keyboardFocused
+        shell.check(rest ? "the close mark held the keyboard before any Tab" : !onClose ? "Tab did not put the keyboard on the close mark"
+            : !keySink.activeFocus ? "Tab moved Qt focus off the key sink" : Bar.tabWalkError(g), "Tab lands on close and no other bar item takes focus")
+        events.keyClick(Qt.Key_Tab, Qt.NoModifier, -1)
+        shell.check(quick.markdownCloseFocused || shown.closeState().focused ? "a second Tab left the keyboard on the close mark" : "", "a second Tab takes the keyboard off the close mark")
     }
 
     function fail(why) {
@@ -397,7 +492,7 @@ ShellRoot {
             }
             if (shell.fixture.length === 0)
                 shell.fail("no fixture arrived in FLEA_MARKDOWN_FIXTURE")
-            else if (!md.contentReady || !pane.contentReady || !longNamePane.contentReady || !colMd.contentReady)
+            else if (!md.contentReady || !pane.contentReady || !longNamePane.contentReady || !quick.markdownShown || !quick.markdownShown.contentReady || !colMd.contentReady)
                 shell.fail("the document never loaded")
             else if (md.flickContentHeight > md.height)
                 shell.fail("the fixture overflowed its frame")
@@ -406,6 +501,7 @@ ShellRoot {
                     + " border=" + md.borderHex + " ink=" + md.inkHex + " chrome=" + md.chromeHex
                     + " run0=" + JSON.stringify(String(md.blockList[0].text).slice(0, 120))
                     + " content=" + Math.round(md.flickContentHeight))
+                quick.revealNow()
                 driver.start()
             }
         }
@@ -787,9 +883,12 @@ ShellRoot {
         shell.savedState = Flea.ViewState.state
         shell.suiteBody = Flea.Theme.font.body
         shell.larger = true
-        Flea.ViewState.state = Object.assign({}, shell.savedState,
-            { display: { textSize: { mode: shell.suiteBody < 16 ? 16 : 20 } } })
         shell.armed = false
-        largerSettle.start()
+        // Native label and r events finish their queued layout before the next specimen replaces the state.
+        Qt.callLater(function () {
+            Flea.ViewState.state = Object.assign({}, shell.savedState,
+                { display: { textSize: { mode: shell.suiteBody < 16 ? 16 : 20 } } })
+            largerSettle.start()
+        })
     }
 }

@@ -94,9 +94,17 @@ function route(root, message) {
         root.menuResult(message)
     } else if (message.t === "pdfcopied") {
         root.pdfCopied(message.id || 0, message.path || "", message.err || "", message.stalled === true)
+    } else if (message.t === "fontlooked") {
+        root.fontLooked(message)
     } else if (message.t === "meta") {
         root.metaResult(message)
         root.meta(message.row, message.w, message.h, message.orient || 1, message.ms, message.rate, message.entries, message.unpacked, message.afailed, message.names, message.lines, message.partial, message.lfailed === true, message.target, message.targetdir, message.owner || "")
+    } else if (message.t === "code") {
+        root.codeResult(message)
+    } else if (message.t === "html") {
+        root.htmlResult(message)
+    } else if (message.t === "compare") {
+        root.compareResult(message)
     } else if (message.t === "shebang") {
         root.shebang(message.path || "", message.hasShebang === true, message.id || 0)
     } else if (message.t === "clip") {
@@ -110,7 +118,8 @@ function route(root, message) {
     } else if (message.t === "jumped") {
         root.jumped(message.id || 0, message.favourites || [], message.zoxide || [], message.recent || [], message.frecency || {})
     } else if (message.t === "devs") {
-        root.pathDevs = DropDev.merged(root.pathDevs, message.devs)
+        if (message.id > 0) root.metaResult(message)
+        else root.pathDevs = DropDev.merged(root.pathDevs, message.devs)
     } else if (message.t === "peeked") {
         root.peeked(message.path, message.hidden === true, message.n, message.rows || [], message.failed === true, message.mode || 0, message.hiddenLast === true, message.first || 0, message.v || 0, message.w !== false, message.by || "", message.desc === true)
     } else if (message.t === "formats") {

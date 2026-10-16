@@ -76,24 +76,30 @@ ShellRoot {
     function mdFlick(md) { return md.view === "source" ? md.sourceItem : md.bodyItem }
     function top(f) { return f.originY - f.topMargin }
     function bottom(f) { return f.originY + f.contentHeight - f.height + f.bottomMargin }
-    // The Source list's first chunk holds the whole of a short document.
-    function sourceText(md) {
+    // The Source list holds one row per line, each a gutter number and a body; the first one drawn stands for the rows.
+    function sourceRow(md) {
         var children = md.sourceItem.contentItem.children
         for (var i = 0; i < children.length; i++)
-            if (children[i].objectName === "sourceChunk" && children[i].index === 0 && children[i].label.text === md.rawText)
-                return children[i].label
-        shell.fail("source text is absent")
+            if (children[i].children.length === 2 && children[i].children[1].textFormat === Text.StyledText)
+                return children[i]
+        shell.fail("source row is absent")
         return null
     }
-    // What the view can scroll: Source text plus its inset, Rendered content plus the list's own margins.
+    // The Source list's content: its header, then one row height for each line the list counts.
+    function sourceContent(md) {
+        var row = shell.sourceRow(md)
+        if (!row) return 0
+        var header = md.sourceItem.headerItem ? md.sourceItem.headerItem.height : 0
+        return header + md.sourceItem.count * row.height
+    }
+    // What the view can scroll, with the frame's inset: Source content plus its inset, Rendered content plus the list's own margins.
     function extent(md) {
         if (md.view !== "source") return md.bodyItem.contentHeight + md.bodyItem.topMargin + md.bodyItem.bottomMargin
-        var text = shell.sourceText(md)
-        return text ? text.implicitHeight + 2 * md.insetY : 0
+        return shell.sourceContent(md) + 2 * md.insetY
     }
-    // The bar the viewer draws for this flickable: inside the Source flickable, on the frame for the lazy list.
+    // The bar the viewer draws for this flickable: beside the Source list on the Source frame, on the frame for the lazy list.
     function barFor(md, f) {
-        var parent = md.view === "source" ? f : md
+        var parent = md.view === "source" ? f.parent.parent : md
         for (var i = 0; i < parent.children.length; i++) {
             var child = parent.children[i]
             if (String(child).indexOf("ViewportScrollBar") === 0 && child.flickable === f) return child
@@ -145,7 +151,7 @@ ShellRoot {
     }
 
     function show(path, icon) {
-        shell.expectedPath = shell.dir + "/" + path
+        shell.expectedPath = shell.dir + "/scenario-" + shell.scenario + "/" + path
         if (shell.columnHost) {
             column.path = shell.expectedPath
             column.meta = {}
@@ -211,15 +217,17 @@ ShellRoot {
     function cell(label, md) {
         var f = shell.mdFlick(md)
         var h = shell.extent(md)
-        var inset = md.view === "source" ? 0 : 2 * md.insetX
+        var inset = 2 * md.insetX
         if (!shell.check(shell.drawnView(md) === shell.view && md.view === shell.view,
             label + " measured the " + shell.drawnView(md) + " layout, not the scenario's " + shell.view)) return
-        if (!shell.check(md.width === f.width + inset && md.height === f.height, "reader left its viewport")) return
+        var padY = md.view === "source" ? 2 * md.insetY : 0
+        if (!shell.check(md.width === f.width + inset && md.height === f.height + padY, "reader left its viewport")) return
         if (md.view === "source") {
-            var text = shell.sourceText(md)
-            if (!text) return
-            if (!shell.check(text.x === md.insetX && text.width === f.width - 2 * md.insetX, "source text width changed")) return
-            if (!shell.check(Math.abs(f.contentHeight - h) < 0.1, "content height is stale")) return
+            var row = shell.sourceRow(md)
+            if (!row) return
+            var body = row.children[1]
+            if (!shell.check(row.width === f.width && Math.abs(body.x + body.width - row.width) < 0.5, "source row width changed")) return
+            if (!shell.check(Math.abs(f.contentHeight - shell.sourceContent(md)) < 0.1, "content height is stale")) return
         } else {
             if (!shell.check(md.bodyItem.width === md.width - 2 * md.insetX, "rendered text width changed")) return
             if (!shell.check(shell.delegatesFitList(md), "a block delegate is not as wide as the list")) return
@@ -232,7 +240,7 @@ ShellRoot {
         var bar = shell.barFor(md, f)
         if (!shell.check(bar && bar.width === Flea.Theme.spacing.rowPaddingX,
             "scroll lane changed its fixed overlay geometry")) return
-        if (!shell.check(bar.overflow === (h - f.height > 0.5), "overflow disagrees with laid-out content")) return
+        if (!shell.check(bar.overflow === (h - md.height > 0.5), "overflow disagrees with laid-out content")) return
         shell.cases++
         shell.log("CASE " + shell.cases + " " + (shell.columnHost ? "column" : "quicklook")
             + " " + md.view + " " + label + " frame=" + md.width + "x" + md.height + " content=" + h
@@ -319,12 +327,15 @@ ShellRoot {
             if (shell.columnHost) {
                 if (column.textLoading || column.linesItem.readFailed) return
                 var lines = shell.find(column, "PreviewLines")
-                if (!lines || lines.lines.length !== 14) return
+                // K11 leaves the model uncapped (9104ee493); count the rows actually drawn in the tall viewport.
+                if (!lines || !lines.code || !lines.code.firstScreen || lines.lines.length < 96) return
+                var drawn = lines.viewport.contentItem.children.filter(function (item) { return item.index !== undefined && item.y >= lines.viewport.contentY && item.y < lines.viewport.contentY + lines.viewport.height }).length
+                if (!shell.check(drawn > 14, "tall column kept the old fourteen-line cap")) return
                 if (!shell.check(lines.numbered === (kind === 1), "code gutter changed")) return
             } else {
                 var text = shell.find(look, "PreviewText")
                 if (!text || text.status !== "ready") return
-                var f = shell.flick(text)
+                var f = text.list
                 if (!shell.check(text.bodyItem.width === f.width && f.contentHeight > f.height,
                     "text/code overflow is absent")) return
                 if (!shell.scrolling) {
@@ -342,11 +353,10 @@ ShellRoot {
             if (!pdf || pdf.shownPage < 0 || pdf.failed) return
             var pf = pdf.viewport
             if (!shell.check(pf !== null, "PDF viewport is absent")) return
-            if (shell.columnHost) column.pdfZoom = 2
-            else shell.find(look, "PdfViewer").zoom = 2
-            if (!shell.check(pf.contentHeight === pf.height * 2 && pf.contentWidth === pf.width * 2,
-                "PDF zoom extent changed")) return
-            pf.contentY = pf.contentHeight - pf.height
+            if (!shell.columnHost) shell.find(look, "PdfViewer").zoom = 2
+            if (!shell.check(shell.columnHost ? pf.contentWidth === pf.width && pdf.stackHeight === pf.contentHeight
+                : pf.contentHeight === pf.height * 2 && pf.contentWidth === pf.width * 2, "PDF extent changed")) return
+            pf.contentY = Math.max(0, pf.contentHeight - pf.height)
         } else {
             if (shell.columnHost) {
                 if (!column.pictureItem || column.pictureItem.status !== Image.Ready) return

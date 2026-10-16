@@ -124,7 +124,12 @@ function lookup(event, root) {
         return root.preview && root.preview.active && (root.preview.isMedia || root.preview.isPdf) ? action : ""
     // The zoom keys reach a PDF or an image, 0 reaches an image only (keys.toml binds it in that context), and e expands a PDF only. l is h's forward: page, else enter or preview.
     if (action === "zoomOut" || action === "zoomIn" || action === "zoomFit" || action === "expand")
-        return (root.preview && root.preview.active && (root.preview.isPdf || (root.preview.isImage && action !== "expand"))) ? action : ""
+        return (root.preview && root.preview.active && (root.preview.isPdf || ((root.preview.isImage || root.preview.isHtml) && action !== "expand"))) ? action : ""
+    // w wraps code, text and Markdown Source; other preview kinds keep no wrap action.
+    if (action === "toggleWrap")
+        return (root.preview && root.preview.active && (root.preview.isCodeText
+            || (root.preview.isDocument && root.preview.markdownShown
+                && root.preview.markdownShown.shownView === "source"))) ? action : ""
     if (action === "pageForward") {
         if (root.preview && root.preview.active)
             return root.preview.isPdf ? action : ""
@@ -168,6 +173,9 @@ function act(action, root, menuId, paths) {
     case "historyBack": root.goBack(); return
     case "historyForward": root.goForward(); return
     case "togglePreview": root.togglePreviewColumn(); return
+    case "previewPageForward":
+    case "previewPageBack": if (root.previewColumnItem) root.previewColumnItem.pageBy(action === "previewPageForward" ? 1 : -1); return
+    case "factsToggle": if (root.previewColumnItem && root.previewColumnItem.visible) root.previewColumnItem.toggleFacts(); return
     case "loadPreview": root.loadSelectionPreview(); return
     case "focusPreview": root.focusPreviewColumn(); return
     case "windowNew": root.newWindow(); return
@@ -211,6 +219,7 @@ function act(action, root, menuId, paths) {
     case "invertSelection": root.invertSelection(); return
     case "showOriginal": root.showOriginal(); return
     case "makeExecutable": root.makeExecutable(paths); return
+    case "compare": Ops.open(root, paths); return
     case "copyPath": Ops.copyAs(root, "path", paths); return
     case "copyName": Ops.copyAs(root, "name", paths); return
     case "copyStem": Ops.copyAs(root, "stem", paths); return

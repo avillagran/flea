@@ -493,6 +493,11 @@ action = "tabNew"
 char = "T"
 action = "tags"
 
+# Swaps the preview column's compact facts line for the full table (ui.json previewFacts); a no-op unless that column is on screen.
+[[text]]
+char = "i"
+action = "factsToggle"
+
 [[text]]
 char = "w"
 action = "tabClose"
@@ -643,7 +648,7 @@ sheet = false
 move = ["cursorDown", "cursorUp", "cursorFirst", "cursorLast", "pageDown", "pageUp", "open",
         "parent", "pageForward", "historyBack", "historyForward", "focusNext", "focusPrevious", "focusPreview",
         "tabNew", "openTab", "tabClose", "tabNext", "tabPrevious", "tabMoveLeft", "tabMoveRight", "windowNew", "escape"]
-look = ["viewList", "viewColumns", "viewGrid", "viewDual", "togglePreview", "loadPreview", "preview",
+look = ["viewList", "viewColumns", "viewGrid", "viewDual", "togglePreview", "factsToggle", "loadPreview", "preview", "previewPageForward", "previewPageBack",
         "toggleHidden", "sidebar", "zoomIn", "zoomOut", "expand", "mute", "textSizeUp", "textSizeDown",
         "textSizeReset", "keymapSheet"]
 find = ["filter", "search", "reveal", "sortNext", "sortReverse", "pathBar", "reload"]
@@ -774,6 +779,11 @@ label = "undo"
 keys = "T"
 action = "tags"
 label = "tags"
+
+[[sheet]]
+keys = "i"
+action = "factsToggle"
+label = "facts"
 
 [[sheet]]
 keys = "^N"
@@ -2039,6 +2049,28 @@ label = "rendered/source"
 frontend = "all"
 context = "preview"
 
+# w wraps the open code or text Quick Look and stays close tab in the listing (preview context only).
+[[preset]]
+name = "all"
+mods = "text"
+key = "w"
+keys = "w"
+action = "toggleWrap"
+label = "wrap"
+frontend = "all"
+context = "preview"
+
+# Compare's overlay: y copies the whole patch, headers included, and the listing's y stays copy (preview context only).
+[[preset]]
+name = "all"
+mods = "text"
+key = "y"
+keys = "y"
+action = "copyPatch"
+label = "copy patch"
+frontend = "all"
+context = "preview"
+
 [[preset]]
 name = "all"
 mods = "text"
@@ -2089,3 +2121,25 @@ action = "escape"
 label = "close editor"
 frontend = "all"
 context = "editor"
+
+# Page the Columns preview while the listing keeps the keyboard.
+
+[[preset]]
+name = "all"
+mods = "text"
+key = "F"
+keys = "F"
+action = "previewPageForward"
+label = "page preview forward"
+frontend = "gui"
+context = "listing"
+
+[[preset]]
+name = "all"
+mods = "text"
+key = "B"
+keys = "B"
+action = "previewPageBack"
+label = "page preview back"
+frontend = "gui"
+context = "listing"

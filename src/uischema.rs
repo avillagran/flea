@@ -19,6 +19,7 @@ pub const DEFAULTS: &str = r#"{
   "foldersFirst": true,
   "groupByKind": false,
   "hidden": false,
+  "langMarks": true,
   "hiddenLast": false,
   "highlightToday": false,
   "wrapAtEnds": false,
@@ -48,8 +49,9 @@ pub const DEFAULTS: &str = r#"{
     "column": true, "loadOn": "automatic",
     "thumbnails": "media", "thumbSize": "medium",
     "thumbNetwork": false, "thumbPhone": false, "thumbUsb": true,
-    "ctrlZoom": true, "volume": 100
+    "ctrlZoom": true, "volume": 100, "width": 0, "wrap": false
   },
+  "previewFacts": "compact",
   "keys": "default",
   "display": { "textSize": { "mode": "system" }, "hyprlandIcons": false },
   "menu": { "hidden": ["delete", "openTerminal", "placeMenu", "runScript",
@@ -156,6 +158,9 @@ pub const PREVIEW: &[(&str, Rule)] = &[
     ("thumbUsb", Rule::Bool),
     ("ctrlZoom", Rule::Bool),
     ("volume", Rule::Count(0.0, 100.0)),
+    ("width", Rule::Count(0.0, 100.0)),
+    // Quick Look's w: wraps long lines in a code or text file; off until pressed.
+    ("wrap", Rule::Bool),
 ];
 
 // mode is "system" or one stop, so there is nowhere to put a free number; see the handoff's Display row.
@@ -192,6 +197,7 @@ pub const SCHEMA: &[(&str, Rule)] = &[
     ("foldersFirst", Rule::Bool),
     ("groupByKind", Rule::Bool),
     ("hidden", Rule::Bool),
+    ("langMarks", Rule::Bool),
     ("hiddenLast", Rule::Bool),
     ("highlightToday", Rule::Bool),
     ("wrapAtEnds", Rule::Bool),
@@ -220,6 +226,8 @@ pub const SCHEMA: &[(&str, Rule)] = &[
     // rules 1 to 4 and ledger directive 59.
     ("shelf", Rule::Group(SHELF)),
     ("preview", Rule::Group(PREVIEW)),
+    // TallPreviews: the tall kinds' one compact facts line, or the full table `i` opens; ui/ViewState.qml reads it.
+    ("previewFacts", Rule::Word(&["compact", "full"])),
     // SettingsKeys.html's four-value chooser over ui/js/Keymap.js's shared tables. A stored name
     // this build cannot honour falls back to default, which is also what a fresh ui.json holds.
     ("keys", Rule::Word(&["default", "vim", "mac", "windows"])),
@@ -279,9 +287,9 @@ mod tests {
             keys,
             [
                 "view", "pickerView", "density", "columns", "columnsLimit", "columnWidths", "addressBar", "sort", "rememberSort", "folderSorts", "rememberViewPerFolder", "folderViews",
-                "dual", "foldersFirst", "groupByKind", "hidden", "hiddenLast", "highlightToday", "wrapAtEnds", "escapeUp", "openMode", "clickRename", "openFoldersWhileDragging", "keyHints", "startIn", "startFolder",
+                "dual", "foldersFirst", "groupByKind", "hidden", "langMarks", "hiddenLast", "highlightToday", "wrapAtEnds", "escapeUp", "openMode", "clickRename", "openFoldersWhileDragging", "keyHints", "startIn", "startFolder",
                 "lastPath", "lastTabs", "newTab", "trashAutoEmpty", "trashSweptOn", "places", "shelf",
-                "preview", "keys",
+                "preview", "previewFacts", "keys",
                 "display", "menu", "updates", "stateVersion"
             ]
         );
@@ -295,6 +303,7 @@ mod tests {
         assert_eq!(d.get("groupByKind").and_then(Json::as_bool), Some(false));
         assert_eq!(d.get("hidden").and_then(Json::as_bool), Some(false));
         assert_eq!(d.get("hiddenLast").and_then(Json::as_bool), Some(false));
+        assert_eq!(d.get("langMarks").and_then(Json::as_bool), Some(true));
         assert_eq!(d.get("highlightToday").and_then(Json::as_bool), Some(false));
         assert_eq!(d.get("wrapAtEnds").and_then(Json::as_bool), Some(false));
         // Escape stays put and a double click opens as in 0.3.4; slow click renames, on by the defaults ledger.
@@ -351,8 +360,13 @@ mod tests {
         assert_eq!(d.get("preview").and_then(|p| p.get("thumbNetwork")).and_then(Json::as_bool), Some(false));
         assert_eq!(d.get("preview").and_then(|p| p.get("thumbPhone")).and_then(Json::as_bool), Some(false));
         assert_eq!(d.get("preview").and_then(|p| p.get("thumbUsb")).and_then(Json::as_bool), Some(true));
-        // Decided 2026-10-03: the Markdown view is not a stored choice, so no leaf for it ships.
-        assert!(d.get("preview").and_then(|p| p.get("markdownView")).is_none());
+        // Document view flips belong only to an open Quick Look.
+        for leaf in ["markdownView", "htmlView"] {
+            assert!(d.get("preview").expect("preview").get(leaf).is_none(), "{leaf} is not stored");
+        }
+        // TallPreviews: the tall kinds show one compact facts line until `i` opens the full table.
+        assert_eq!(d.get("previewFacts").and_then(Json::as_str), Some("compact"));
+        assert_eq!(d.get("preview").and_then(|p| p.get("wrap")).and_then(Json::as_bool), Some(false));
         assert_eq!(d.get("display").and_then(|p| p.get("textSize")).and_then(|t| t.get("mode")).and_then(Json::as_str), Some("system"));
         let display: Vec<&str> = d.get("display").and_then(Json::as_object).expect("display").iter().map(|(k, _)| k.as_str()).collect();
         assert_eq!(display, ["textSize", "hyprlandIcons"], "the compositor owns opacity, icons and shadows");
@@ -379,6 +393,40 @@ mod tests {
             // ui.json behaves as 0.2.1 did. placeMenu is the Places rows' own menu.
             ["delete", "openTerminal", "placeMenu", "runScript", "moveto", "copyto", "properties", "permissions", "copyAs", "pasteAs", "invertSelection", "extThumbs", "run", "openAsText"]
         );
+    }
+
+    // Code icons default on; a saved false stays off, and invalid values heal to the default.
+    #[test]
+    fn language_marks_default_on_and_keep_a_saved_false() {
+        let current = crate::uistate::from_file("{}");
+        assert_eq!(current.get("langMarks").and_then(Json::as_bool), Some(true));
+        for value in ["true", "false"] {
+            let patch = jsondoc::parse(&format!(r#"{{"langMarks":{value}}}"#)).expect("boolean patch");
+            let next = crate::uistate::patched(&current, &patch).expect("boolean accepted");
+            assert_eq!(next.get("langMarks").and_then(Json::as_bool), Some(value == "true"));
+        }
+        let off = crate::uistate::from_file(r#"{"langMarks":false}"#);
+        let patch = jsondoc::parse(r#"{"hidden":true}"#).expect("unrelated patch");
+        let kept = crate::uistate::patched(&off, &patch).expect("saved false retained");
+        assert_eq!(kept.get("langMarks").and_then(Json::as_bool), Some(false));
+        for value in [r#""true""#, r#""false""#, "1", "null", "[]", "{}"] {
+            let text = format!(r#"{{"langMarks":{value}}}"#);
+            let patch = jsondoc::parse(&text).expect("patch");
+            assert!(crate::uistate::patched(&current, &patch).expect_err("not a boolean").contains("langMarks"));
+            assert_eq!(crate::uistate::from_file(&text).get("langMarks").and_then(Json::as_bool), Some(true));
+        }
+    }
+
+    // The facts mode takes its two words, and a file holding any other word reads as compact.
+    #[test]
+    fn the_preview_facts_mode_takes_two_words_and_a_bad_one_reads_compact() {
+        let current = crate::uistate::from_file("{}");
+        let takes = |patch: &str| crate::uistate::patched(&current, &jsondoc::parse(patch).expect("patch parses"));
+        assert!(takes(r#"{"previewFacts":"compact"}"#).is_ok() && takes(r#"{"previewFacts":"full"}"#).is_ok());
+        assert!(takes(r#"{"previewFacts":"wide"}"#).expect_err("refused").contains("previewFacts"));
+        let word = |text: &str| crate::uistate::from_file(text).get("previewFacts").and_then(Json::as_str).map(str::to_owned);
+        assert_eq!(word(r#"{"previewFacts":"wide"}"#).as_deref(), Some("compact"));
+        assert_eq!(word(r#"{"previewFacts":"full"}"#).as_deref(), Some("full"));
     }
 
     // Each key a place, each value a sort order; past the cap the oldest entries go.

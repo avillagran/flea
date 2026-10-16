@@ -87,6 +87,8 @@ trash_owned_pid() {
 }
 
 trash_private_pids() {
+    [[ -n "${trash_bus_address:-}" && -n "${XDG_DATA_HOME:-}" ]] \
+        || { printf 'FAIL: trash: private process scan lost its bus address or data root\n' >&2; return 1; }
     python3 - "$trash_bus_address" "$XDG_DATA_HOME" "${1:-}" <<'PY'
 import os, pathlib, sys
 address, data = sys.argv[1].encode(), sys.argv[2].encode()
@@ -107,29 +109,37 @@ PY
 }
 
 trash_cleanup() {
-    local result="$1" pid end
+    local result="$1" pid end pids
     trap - EXIT HUP INT TERM
+    [[ -n "${trash_box:-}" && -f "$trash_box/$SANDBOX_MARKER" && "${trash_bus_address:-}" == "unix:path=$trash_box/bus" ]] \
+        || { printf 'FAIL: trash: teardown lost its owned session root or bus address\n' >&2; exit 1; }
     (kill_flea) || result=1
-    for pid in $(trash_private_pids); do
-        trash_owned_pid "$pid" && kill -TERM "$pid" 2>/dev/null
+    pids=$(trash_private_pids) || exit 1
+    for pid in $pids; do
+        if trash_owned_pid "$pid"; then kill -TERM "$pid" 2>/dev/null || true; fi
     done
     end=$((SECONDS + 10))
     while (( SECONDS < end )); do
-        [[ -z "$(trash_private_pids)" ]] && break
+        pids=$(trash_private_pids) || exit 1
+        [[ -z "$pids" ]] && break
         sleep 0.05
     done
-    for pid in $(trash_private_pids); do
+    pids=$(trash_private_pids) || exit 1
+    for pid in $pids; do
         if trash_owned_pid "$pid"; then
             printf 'FAIL: trash: private process %s did not terminate\n' "$pid" >&2
             kill -KILL "$pid" 2>/dev/null
             result=1
         fi
     done
-    [[ -z "$trash_bus_pid" ]] || wait "$trash_bus_pid" 2>/dev/null || true
+    [[ -z "${trash_bus_pid:-}" ]] || wait "$trash_bus_pid" 2>/dev/null || true
+    pids=$(trash_private_pids) || exit 1
+    [[ -z "$pids" ]] || result=1
     if [[ "$result" -ne 0 ]]; then
         trash_guard "$trash_box/payload"
         find "$trash_box" -type d -exec chmod u+rwx -- {} + || result=1
     fi
+    printf 'TRASH_TEARDOWN private=%s root=%s remaining=%s status=%s\n' "$trash_private_bus_id" "$trash_box" "${pids:-none}" "$result"
     printf 'TRASH_NATIVE checks=%s teardown_status=%s; screenshots require separate inspection.\n' "$trash_checks" "$result"
     exit "$result"
 }
@@ -992,8 +1002,8 @@ case_trash() {
     trash_wait '.total == 1 and .selectedCount == 1 and (.busy == false)'
     [[ "$(ipc statusPrimary)" == 'Deleted 1 of 2 items · 1 failed' && "$(ipc statusError)" == true ]] \
         || fail "trash: partial deletion did not retain the named primary failure; observed primary [$(ipc statusPrimary)] error [$(ipc statusError)]"
-    # The locked directory cannot be moved into the quarantine, so src/backend/trashdelete.rs answers "Could not claim Trash item: <io_message>", and ui/TrashView.qml names the file before it.
-    [[ "$(ipc statusDetail)" == 'locked failed: Could not claim Trash item: permission denied' ]] \
+    # The locked directory cannot be moved into the quarantine, so src/backend/trashdelete.rs answers "Could not prepare the deletion, so nothing was deleted: <io_message>.", and ui/TrashView.qml names the file before it.
+    [[ "$(ipc statusDetail)" == 'locked failed: Could not prepare the deletion, so nothing was deleted: permission denied.' ]] \
         || fail "trash: partial deletion has no file-specific failure detail; observed [$(ipc statusDetail)]"
     trash_guard_store 1
     trash_shot trash-partial-failure

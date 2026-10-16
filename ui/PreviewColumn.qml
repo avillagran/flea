@@ -6,7 +6,6 @@ import "js/Format.js" as Format
 import "js/Icons.js" as Icons
 import "js/KeyName.js" as KeyName
 import "js/Kinds.js" as Kinds
-import "js/PreviewKeys.js" as PreviewKeys
 import "js/Thumbs.js" as Thumbs
 import "js/ExtThumbs.js" as ExtThumbs
 // The columns view's last pane when a file is picked. One anatomy for all twelve states the canvas
@@ -33,14 +32,9 @@ Item {
     property bool loadingHeldOff: false
     property int selectionCount: 0
     property var selectedRows: []
-    // The row's own absolute path, which the PDF page needs and nothing else here does.
     property string path: ""
-    property int pdfControlIndex: -1
-    property real pdfZoom: PreviewKeys.PDF_ZOOM_MIN
     readonly property real pdfScrollY: pdfFlick.contentY
     readonly property var pdfFrameItem: frame
-    readonly property var pdfToolbarItem: pdfToolbar
-    readonly property var pdfControls: [pagePrev, pageNext, pdfZoomOut, pdfZoomIn, pdfExpand]
     signal expandRequested()
     // No player exists until the operator presses play. The strip draws from the probe's own
     // duration, so browsing a folder of clips builds no MediaPlayer at all: it costs nothing, makes
@@ -54,9 +48,7 @@ Item {
 
     // A new row is a new subject, so whatever was playing stops being this column's business, and
     // the player it needed is torn down with it.
-    onPathChanged: { root.wantsPlayback = false; root.pdfZoom = PreviewKeys.PDF_ZOOM_MIN; root.pdfControlIndex = -1 }
-    onActiveFocusChanged: if (root.activeFocus && root.pdfPages > 0 && root.pdfControlIndex < 0)
-        PreviewKeys.pdfAction("focusNext", root)
+    onPathChanged: root.wantsPlayback = false
 
     // What the row itself is, before Loading or Error can override it. The readers below are built
     // from this and never from previewState: an error that switched its own reader off would clear
@@ -69,7 +61,7 @@ Item {
     // frame is neither: its facts are the listing's own and there is nothing in flight.
     readonly property bool busy: root.pending || (root.row !== null && root.row.d !== true && root.meta === null && !root.manualHold)
     readonly property string pdfSentence: pdfLoader.item ? pdfLoader.item.failSentence : ""
-    readonly property string failure: lines.readFailed || root.pdfFailed
+    readonly property string failure: lines.readFailed || root.pdfFailed || (root.isHtmlRow && root.markdown && root.markdown.failed)
         ? (root.pdfFailed && root.pdfSentence.length > 0 ? root.pdfSentence : "This file could not be read.")
         : (root.meta && root.meta.archiveFailed ? "This archive could not be read." : "")
 
@@ -80,23 +72,26 @@ Item {
     readonly property bool pdfDrawn: pdfLoader.item ? pdfLoader.item.shownPage >= 0 : false
 
     readonly property string previewState: Facts.state(root.row, root.selectionCount, root.busy, root.failure, root.kindName)
+    // What the rows and the facts line state that the listing and the meta reply do not carry.
+    readonly property var factExtra: ({ pages: root.pdfPages > 0 ? String(root.pdfPages) : "",
+                                        owner: root.meta && root.meta.owner ? root.meta.owner : "" })
     readonly property var factRows: root.previewState === Facts.MULTI
         ? Facts.multiFacts(root.selectedRows, root.selectionCount)
-        : (root.row ? Facts.facts(root.previewState, root.row, root.meta, root.kindName,
-                                  { pages: root.pdfPages > 0 ? String(root.pdfPages) : "",
-                                    owner: root.meta && root.meta.owner ? root.meta.owner : "" }) : [])
+        : (root.row ? Facts.facts(root.previewState, root.row, root.meta, root.kindName, root.factExtra) : [])
 
-    // The canvas's frame is 16 by 10, which is the one proportion every state shares.
+    // The canvas's frame is 16 by 10, the one proportion every state shares but a tall kind's, which fills the column down to the name.
     readonly property real frameRatio: 10 / 16
-    // RenderedPreviews: a Markdown row renders instead of listing its first lines, in a frame
-    // tall from the column top down to the name, with no toggle; it always renders.
+    readonly property bool tallRow: root.previewState !== Facts.MULTI && Facts.tall(root.rowState)
+    // Document rows always render in the tall column frame, independently of Quick Look.
     readonly property bool isMarkdownRow: root.rowState === Facts.TEXT && root.row !== null
         && Kinds.isMarkdown(root.row.n)
-    // The Markdown pane stays null without a Markdown row, so every reader guards the loader item.
+    readonly property bool isHtmlRow: root.rowState === Facts.CODE && root.row !== null && Kinds.isHtml(root.row.n)
+    readonly property bool isDocumentRow: root.isMarkdownRow || root.isHtmlRow
+    // The document pane stays null without a document row, so every reader guards the loader item.
     readonly property var fontItem: fontLoader.item
     readonly property var markdown: markdownLoader.item
-    // The Markdown reader's activation, read by the Loader and its item together so the two cannot drift apart.
-    readonly property bool markdownActive: root.visible && !root.manualHold && root.rowState === Facts.TEXT && root.isMarkdownRow
+    // The document reader's activation is shared by the Loader and its item so the two cannot drift apart.
+    readonly property bool markdownActive: root.visible && !root.manualHold && root.isDocumentRow && (!root.isHtmlRow || root.selectionCount <= 1)
     // Stretch renders a vector to the whole box, so the frame's pictures keep Fit for an SVG alone.
     readonly property bool vectorPath: /\.svgz?$/i.test(root.path)
     // EXIF orientations 5 to 8 swap the sides, and Qt fits its decode before it turns, so the box it is asked for turns too.
@@ -119,6 +114,7 @@ Item {
     readonly property Item pictureItem: playerLoader.visible && playerLoader.item ? playerLoader.item.contentItem : frameThumb
     readonly property Item linesItem: lines
     readonly property Item archiveItem: archivePane
+    readonly property alias factsLine: facts.line
     // A 3D model's original is never decoded: Qt has no plugin for it, and each attempt logs a warning.
     readonly property bool originalRefused: Kinds.isModel(root.path)
     // Ready is the decoded picture (thumbShown is true while it loads); a model with no thumbnail coming reads Error, which ui/js/PreviewSwap.js treats as settled.
@@ -138,10 +134,7 @@ Item {
         Rectangle {
             id: frame
             width: parent.width
-            height: (root.isMarkdownRow || root.rowState === Facts.FONT)
-                ? Math.max(0, root.height - 2 * Theme.spacing.rowPaddingX - nameText.height
-                    - factsTable.height - 3 * Theme.spacing.gap)
-                : Math.round(width * root.frameRatio)
+            height: root.tallRow ? Facts.tallHeight(root.height, Theme.spacing.rowPaddingX, nameText.height, facts.height, Theme.spacing.gap) : Math.round(width * root.frameRatio)
             // The listing's own colour, so on glass the pane's ground under it is the fill; see ui/Glass.qml.
             color: Glass.on ? "transparent" : Theme.color.background
             border.width: Theme.spacing.hairline
@@ -166,7 +159,7 @@ Item {
                 y: vector ? Theme.spacing.hairline : Math.round((parent.height - height) / 2)
                 width: vector ? boxWidth : implicitWidth * fit
                 height: vector ? boxHeight : implicitHeight * fit
-                visible: root.thumbShown && !playerLoader.visible
+                visible: root.thumbShown && !playerLoader.visible && !(gifLoader.item && gifLoader.item.ready)
                 // Owned by root.applyDecodeTarget, never bound: a bound url and a bound
                 // ceiling land in separate passes and each pass reloads the standing file.
                 source: ""
@@ -176,6 +169,22 @@ Item {
                 asynchronous: true
                 cache: false
                 Component.onCompleted: root.applyDecodeTarget()
+            }
+
+            // An animated GIF moves only after its still frame is drawn, and not while the column is hidden or covered; the still stays until the first moving frame is ready.
+            Loader {
+                id: gifLoader
+                x: frameThumb.x
+                y: frameThumb.y
+                width: frameThumb.width
+                height: frameThumb.height
+                active: root.previewState === Facts.IMAGE && root.meta !== null && root.meta.frames > 1
+                    && /\.gif$/i.test(root.path) && frameThumb.status === Image.Ready
+                source: "PreviewAnimation.qml"
+                onLoaded: {
+                    item.path = Qt.binding(function () { return root.path })
+                    item.shown = Qt.binding(function () { return root.visible && !root.overlayOpen })
+                }
             }
 
             // The player, in the frame it paints into; built by the first press of play and not before, and by source rather than type, because QtMultimedia costs 20 MB on import alone.
@@ -240,22 +249,23 @@ Item {
                 id: lines
                 anchors.fill: parent
                 anchors.margins: Theme.spacing.hairline
-                visible: (root.previewState === Facts.TEXT || root.previewState === Facts.CODE) && !root.isMarkdownRow
-                active: root.visible && !root.manualHold && (root.rowState === Facts.TEXT || root.rowState === Facts.CODE) && !root.isMarkdownRow
+                visible: (root.previewState === Facts.TEXT || root.previewState === Facts.CODE) && !root.isDocumentRow
+                active: root.visible && !root.manualHold && (root.rowState === Facts.TEXT || root.rowState === Facts.CODE) && !root.isDocumentRow
                 path: root.path
                 size: root.row ? root.row.s : 0
                 maxBytes: root.textLimit
                 truncate: root.truncateText
+                backend: root.pane ? root.pane.backend : null
                 numbered: root.previewState === Facts.CODE
             }
-            // RenderedPreviews: the Markdown document rendered, flowing tall with no toggle; a file-path Loader compiles it only when needed.
+            // The document body flows tall with no toggle; a file-path Loader compiles it only when needed.
             Loader {
                 id: markdownLoader
                 anchors.fill: parent
                 anchors.margins: Theme.spacing.hairline
                 active: root.markdownActive
-                visible: root.isMarkdownRow
-                source: "PreviewMarkdown.qml"
+                visible: root.isDocumentRow && (!root.isHtmlRow || root.selectionCount <= 1)
+                source: root.isHtmlRow ? "PreviewHtml.qml" : "PreviewMarkdown.qml"
                 onLoaded: {
                     item.path = Qt.binding(function () { return root.path })
                     item.size = Qt.binding(function () { return root.row ? root.row.s : 0 })
@@ -263,7 +273,15 @@ Item {
                     item.active = Qt.binding(function () { return root.markdownActive })
                     item.truncate = Qt.binding(function () { return root.truncateText })
                     item.compact = true
+                    item.externalScrollBars = true
                 }
+            }
+            // The document reader takes the pane's backend once loaded, so Source and Markdown fences colour through the engine.
+            Binding {
+                target: markdownLoader.item
+                property: "backend"
+                value: root.pane ? root.pane.backend : null
+                when: markdownLoader.status === Loader.Ready
             }
             Loader {
                 id: fontLoader
@@ -278,26 +296,27 @@ Item {
                 }
             }
 
-            // The PDF's own page, which is the frame's whole content for that state. QtPdf is
-            // reached only through this Loader, so a folder with no PDF in it never opens one.
+            // The PDF's pages, one under another at the frame's width; QtPdf is reached only through this Loader, so a folder with no PDF never opens one.
             Flickable {
                 id: pdfFlick
                 anchors.fill: parent
                 anchors.margins: Theme.spacing.hairline
                 visible: root.previewState === Facts.PDF
                 clip: true
-                contentWidth: width * root.pdfZoom
-                contentHeight: height * root.pdfZoom
+                contentWidth: width
+                contentHeight: pdfLoader.height
+                flickableDirection: Flickable.VerticalFlick
                 boundsBehavior: Flickable.StopAtBounds
                 Flea.FastScrollHandler { flickable: pdfFlick }
                 Flea.ViewportScrollBars { parent: pdfFlick; flickable: pdfFlick }
                 Loader {
                     id: pdfLoader
-                    width: pdfFlick.contentWidth
-                    height: pdfFlick.contentHeight
+                    width: pdfFlick.width
+                    height: item ? item.stackHeight : 0
                     active: root.visible && !root.manualHold && root.rowState === Facts.PDF
                     source: "PreviewPdf.qml"
                     onLoaded: {
+                        item.continuous = true
                         item.path = Qt.binding(function () { return root.path })
                         item.viewport = pdfFlick
                         item.active = true
@@ -352,63 +371,6 @@ Item {
             }
         }
 
-        // PDF controls stay outside the page frame, including when a narrow column wraps them.
-        Flow {
-            id: pdfToolbar
-            width: Math.min(pagePrev.width * root.pdfControls.length + pageLabel.width + spacing * root.pdfControls.length,
-                parent.width)
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Theme.spacing.gap
-            visible: root.previewState === Facts.PDF && root.pdfPages > 0
-
-            Flea.ChromeButton {
-                id: pagePrev
-                glyph: "chevron-left"
-                keyboardFocused: root.activeFocus && root.pdfControlIndex === 0
-                enabled: root.pdfPage() > 0
-                onActivated: root.turnPage(-1)
-            }
-
-            Text {
-                id: pageLabel
-                height: pagePrev.height
-                verticalAlignment: Text.AlignVCenter
-                text: (pdfLoader.item ? pdfLoader.item.drawnPage + 1 : 1) + " / " + root.pdfPages
-                color: Theme.color.muted
-                font.family: Theme.font.family
-                font.pixelSize: Theme.font.caption
-                textFormat: Text.PlainText
-            }
-
-            Flea.ChromeButton {
-                id: pageNext
-                glyph: "chevron-right"
-                keyboardFocused: root.activeFocus && root.pdfControlIndex === 1
-                enabled: root.pdfPage() + 1 < root.pdfPages
-                onActivated: root.turnPage(1)
-            }
-            Flea.ChromeButton {
-                id: pdfZoomOut
-                glyph: "minus"
-                enabled: root.pdfZoom > PreviewKeys.PDF_ZOOM_MIN
-                keyboardFocused: root.activeFocus && root.pdfControlIndex === 2
-                onActivated: root.zoomBy(-1)
-            }
-            Flea.ChromeButton {
-                id: pdfZoomIn
-                glyph: "plus"
-                enabled: root.pdfZoom < PreviewKeys.PDF_ZOOM_MAX
-                keyboardFocused: root.activeFocus && root.pdfControlIndex === 3
-                onActivated: root.zoomBy(1)
-            }
-            Flea.ChromeButton {
-                id: pdfExpand
-                glyph: "maximize"
-                keyboardFocused: root.activeFocus && root.pdfControlIndex === 4
-                onActivated: root.toggleExpand()
-            }
-        }
-
         // A media file adds the transport strip under the frame, which is what the canvas draws on
         // its Video and Audio tiles. QtMultimedia is reached only through this Loader, on demand.
         Loader {
@@ -431,9 +393,11 @@ Item {
             elide: Text.ElideRight
         }
 
-        Flea.FactsTable {
-            id: factsTable
+        Flea.PreviewFacts {
+            id: facts
             width: parent.width
+            compact: root.tallRow && ViewState.previewFacts === "compact"
+            line: Facts.compactLine(root.rowState, root.row, root.meta, root.kindName, root.factExtra)
             rows: root.factRows
         }
     }
@@ -467,21 +431,23 @@ Item {
         }
     }
 
-    // Which page the frame is on, and the turn the chevrons make; both read back over IPC too.
+    Flea.PreviewScroll {
+        id: scrolling
+        column: root
+    }
+
+    function pageBy(direction) { scrolling.pageBy(direction) }
+    // The page under the frame's top, read back over IPC too, and the turn that scrolls to the next or previous one.
     function pdfPage() { return pdfLoader.item ? pdfLoader.item.page : 0 }
     function turnPage(delta) { if (pdfLoader.item) pdfLoader.item.turn(delta) }
-    function zoomBy(steps) { root.pdfZoom = Math.max(PreviewKeys.PDF_ZOOM_MIN, Math.min(PreviewKeys.PDF_ZOOM_MAX, root.pdfZoom + steps * PreviewKeys.PDF_ZOOM_STEP)) }
     function toggleExpand() { root.expandRequested() }
-    function scrollPage(delta) {
-        pdfFlick.contentY = Math.max(0, Math.min(pdfFlick.contentHeight - pdfFlick.height,
-            pdfFlick.contentY + delta * Theme.rowHeight))
-    }
-    function pdfChevron(dir) { return dir === "left" ? pagePrev : pageNext }
+    function scrollPage(delta) { scrolling.scrollPage(delta, pdfFlick) }
     // Whether a PdfDocument exists at all, which is what makes the Loader worth having.
     function pdfLoaded() { return pdfLoader.item !== null }
+    function pdfLanded() { return pdfLoader.item ? pdfLoader.item.landedPages() : [] }
 
-    // For the geometry gate: the drawn PDF page, null until the document below built it.
-    function pdfPageItem() { return pdfLoader.item ? pdfLoader.item.pageItem : null }
+    // For the geometry gates: the box of the page under the frame's top, or of page index, null until the document below built it.
+    function pdfPageItem(index) { return pdfLoader.item ? pdfLoader.item.pageSlot(index === undefined ? pdfLoader.item.page : index) : null }
     // Read back through shell.qml's IPC so a test can prove the transport plays and seeks.
     function mediaPlaying() { return mediaLoader.item ? mediaLoader.item.playing : false }
     function mediaPosition() { return mediaLoader.item ? mediaLoader.item.position : 0 }
@@ -503,11 +469,10 @@ Item {
         }
         return out.join("\n")
     }
-    // The swap waits on the text that is actually drawn: the rendered document for Markdown.
-    readonly property bool textLoading: root.isMarkdownRow
-        ? (markdown ? markdown.loading : true) : lines.loading
+    readonly property bool textLoading: scrolling.loading
     function archiveNames() { return root.meta && root.meta.names ? root.meta.names.map(function (e) { return e.n }).join("|") : "" }
     function failureText() { return root.failure }
+    function toggleFacts() { ViewState.changeKey("previewFacts", ViewState.previewFacts === "compact" ? "full" : "compact") }
 
     // The two whole sentences a multi-selection names its count with, one per count, each filled by Format.fill.
     readonly property var selectedWords: ({ one: "%1 item selected", many: "%1 items selected" })
@@ -532,9 +497,9 @@ Item {
         case Facts.PDF:
             return !root.pdfDrawn
         case Facts.TEXT:
-            return root.isMarkdownRow ? (markdown ? markdown.blank : false) : lines.blank
+            return root.isDocumentRow ? (markdown ? markdown.blank : false) : lines.blank
         case Facts.CODE:
-            return lines.blank
+            return root.isDocumentRow ? (markdown ? markdown.blank : false) : lines.blank
         case Facts.ARCHIVE:
             return root.meta === null
         case Facts.MULTI:
@@ -578,6 +543,11 @@ Item {
     // Why the frame is showing a mark instead of the thing it meant to draw. Empty for every state
     // whose mark is simply what it draws, so the line only ever appears when something went wrong.
     function frameNote() {
+        if (root.isHtmlRow && root.markdown) {
+            if (root.markdown.binary) return "binary file"
+            if (root.markdown.tooLarge) return "too large to preview"
+        }
+        if (lines.note.length > 0) return lines.note
         if (root.manualHold) {
             return KeyName.hinted("%1 loads it", "loadPreview")
         }

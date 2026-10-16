@@ -1,10 +1,8 @@
-# Units loaded before the startup-objects probe's first rows settle, one per line; bytes is their summed ceiling, see AGENTS.md.
+# First-frame UI units and their summed source bytes, pinned by startup-objects.sh.
 Backend.qml
-CardScroll.qml
 ChromeBar.qml
 ChromeButton.qml
 ChromeModes.qml
-ContextMenu.qml
 Crumb.qml
 CursorMark.qml
 DefaultClaim.qml
@@ -27,14 +25,14 @@ Header.qml
 Ipc.qml
 IpcMenuState.qml
 IpcPreviewState.qml
+LangMark.qml
+LangMarkLoader.qml
 List.qml
 LoadingState.qml
 LocalSend.qml
-LocalSendMark.qml
 MatchText.qml
 MediaSound.qml
-MenuEdgeFade.qml
-MenuRow.qml
+MenuHost.qml
 MountListing.qml
 NetworkMounts.qml
 NetworkPlaces.qml
@@ -48,8 +46,10 @@ PaneSwap.qml
 PaneWire.qml
 PhoneMounts.qml
 PrebuildDriver.qml
+RailDrop.qml
 RailHeading.qml
 RailPlaces.qml
+RailTrashRow.qml
 RenameField.qml
 ResizeHandle.qml
 Row.qml
@@ -69,12 +69,13 @@ StatusBar.qml
 TabBar.qml
 TabDragGeometry.qml
 Taildrop.qml
-TailscaleMark.qml
 Theme.qml
+ThemeColors.qml
 TransferCard.qml
 TrashHost.qml
 TrashMonitor.qml
 UpdateCheck.qml
+UserDirs.qml
 ViewState.qml
 ViewportScrollBar.qml
 WindowBody.qml
@@ -116,16 +117,18 @@ js/Input.js
 js/KeyName.js
 js/Keymap.js
 js/Kinds.js
+js/LangMarkPaths.js
+js/LangMarks.js
+js/Lists.js
 js/LocalSend.js
-js/LockedMenu.js
 js/MakeDefault.js
 js/MarkdownPrepared.js
 js/Marks.js
 js/Marquee.js
 js/Match.js
+js/Material.js
 js/Menu.js
-js/MenuFit.js
-js/MenuRefresh.js
+js/MenuContext.js
 js/MenuWheel.js
 js/Messages.js
 js/Motion.js
@@ -142,6 +145,7 @@ js/PlaceMenu.js
 js/Places.js
 js/PreviewKeys.js
 js/Protocols.js
+js/RailDrop.js
 js/RailKeys.js
 js/RailMenu.js
 js/Recent.js
@@ -159,8 +163,8 @@ js/ShelfPile.js
 js/SlowClick.js
 js/SlowOp.js
 js/Sort.js
-js/StateWords.js
 js/Startup.js
+js/StateWords.js
 js/Status.js
 js/Swap.js
 js/TabMove.js
@@ -174,4 +178,5 @@ js/Trash.js
 js/TrashDates.js
 js/UiState.js
 js/Update.js
-bytes 1673644
+js/UserDirs.js
+bytes 1774032

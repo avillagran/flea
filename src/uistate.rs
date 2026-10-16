@@ -449,19 +449,28 @@ mod tests {
         assert_eq!(merged.get("places").and_then(|p| p.get("newLeaf")).and_then(Json::as_f64), Some(7.0));
     }
 
-    // As of 2026-10-03: preview.markdownView never shipped in a release and is no stored choice; a file that carries it still loads.
+    // Retired view keys load as unknown leaves, but cannot be patched into state.
     #[test]
-    fn a_state_file_holding_the_retired_markdown_view_loads_and_a_patch_for_it_is_refused() {
-        let merged = from_file(r#"{"preview":{"markdownView":"source","thumbSize":"large"},"view":"columns"}"#);
+    fn retired_document_views_load_but_patches_are_refused() {
+        let merged = from_file(r#"{"preview":{"markdownView":"source","htmlView":"source","thumbSize":"large"},"view":"columns"}"#);
         assert_eq!(merged.get("view").and_then(Json::as_str), Some("columns"));
         let preview = merged.get("preview").expect("preview");
         assert_eq!(preview.get("thumbSize").and_then(Json::as_str), Some("large"));
-        assert_eq!(preview.get("markdownView").and_then(Json::as_str), Some("source"), "kept as an unknown key");
-        let shipped = crate::uischema::defaults();
-        assert!(shipped.get("preview").and_then(|p| p.get("markdownView")).is_none());
-        let patch = jsondoc::parse(r#"{"preview":{"markdownView":"source"}}"#).expect("patch parses");
-        let message = patched(&from_file("{}"), &patch).expect_err("the patch must be refused");
-        assert!(message.contains("markdownView"), "got {}", message);
+        assert_eq!(preview.get("markdownView").and_then(Json::as_str), Some("source"));
+        assert_eq!(preview.get("htmlView").and_then(Json::as_str), Some("source"));
+        let next = patched(&merged, &jsondoc::parse(r#"{"density":"tight"}"#).unwrap()).expect("unrelated patch applies");
+        let loaded = from_file(&text(&next));
+        for leaf in ["markdownView", "htmlView"] {
+            assert!(from_file("{}").get("preview").unwrap().get(leaf).is_none(), "fresh state has no {leaf}");
+            assert_eq!(loaded.get("preview").unwrap().get(leaf).and_then(Json::as_str), Some("source"));
+            for value in ["source", "rendered", "unknown"] {
+                let patch = jsondoc::parse(&format!(r#"{{"preview":{{"{leaf}":"{value}"}}}}"#)).unwrap();
+                assert!(patched(&from_file("{}"), &patch).unwrap_err().contains(leaf));
+                assert!(patched(&loaded, &patch).unwrap_err().contains(leaf));
+            }
+        }
+        let unknown = jsondoc::parse(r#"{"preview":{"futureDocumentView":"source"}}"#).unwrap();
+        assert!(patched(&merged, &unknown).unwrap_err().contains("futureDocumentView"));
     }
 
     #[test]
@@ -805,6 +814,36 @@ mod tests {
             let patch = jsondoc::parse(&format!(r#"{{"preview":{{"volume":{}}}}}"#, bad)).expect("patch parses");
             let message = patched(&from_file("{}"), &patch).expect_err("a patch from Flea must be whole");
             assert!(message.contains("volume"), "got {}", message);
+        }
+    }
+
+    fn width_of(doc: &Json) -> Option<f64> {
+        doc.get("preview").and_then(|p| p.get("width")).and_then(Json::as_f64)
+    }
+
+    // preview.width is the last Columns column's whole percent of the area, and 0 is the default third a file without the key draws.
+    #[test]
+    fn a_preview_width_survives_a_write_and_a_file_without_one_reads_the_default_third() {
+        assert_eq!(width_of(&from_file("{}")), Some(0.0));
+        for percent in ["0", "37", "100"] {
+            let patch = jsondoc::parse(&format!(r#"{{"preview":{{"width":{}}}}}"#, percent)).expect("patch parses");
+            let written = patched(&from_file("{}"), &patch).expect("a whole percent lands");
+            let expected = percent.parse::<f64>().ok();
+            assert_eq!(width_of(&written), expected, "the patched document holds {}", percent);
+            assert_eq!(width_of(&from_file(&text(&written))), expected, "{} reads back after the file is written", percent);
+        }
+    }
+
+    #[test]
+    fn a_preview_width_that_is_not_a_whole_percent_reads_the_default_third_and_a_patch_for_it_is_refused() {
+        for bad in ["101", "-1", "37.5", r#""wide""#] {
+            let stored = format!(r#"{{"preview":{{"width":{},"thumbSize":"large"}}}}"#, bad);
+            let read = from_file(&stored);
+            assert_eq!(width_of(&read), Some(0.0), "{} falls back to the default third", bad);
+            assert_eq!(read.get("preview").and_then(|p| p.get("thumbSize")).and_then(Json::as_str), Some("large"));
+            let patch = jsondoc::parse(&format!(r#"{{"preview":{{"width":{}}}}}"#, bad)).expect("patch parses");
+            let message = patched(&from_file("{}"), &patch).expect_err("a patch from Flea must be whole");
+            assert!(message.contains("width"), "got {}", message);
         }
     }
 }

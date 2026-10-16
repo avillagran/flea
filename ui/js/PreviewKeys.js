@@ -10,7 +10,7 @@
 
 // Left/Right's seek step, Task 22's operator ruling; act is the only reader.
 var SEEK_MS = 5000
-// The zoom ladder both PDF strips walk: the bottom rung fits the frame, one step a press, up to four times.
+// The zoom ladder Quick Look's PDF strip walks: the bottom rung fits the frame, one step a press, up to four times.
 var PDF_ZOOM_MIN = 1
 var PDF_ZOOM_MAX = 4
 var PDF_ZOOM_STEP = 0.25
@@ -20,8 +20,17 @@ function zoomStep(zoom, steps) {
     return Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom + steps * PDF_ZOOM_STEP))
 }
 
+// The column's PDF has no strip: pages scroll, and Space, Return or e opens Quick Look at the page in view.
+function columnPdfAction(action, viewer) {
+    if (action === "open" || action === "preview" || action === "expand") viewer.toggleExpand()
+    else if (action === "seekBack" || action === "parent") viewer.turnPage(-1)
+    else if (action === "seekForward" || action === "pageForward") viewer.turnPage(1)
+    else if (action === "cursorDown" || action === "cursorUp") viewer.scrollPage(action === "cursorDown" ? 1 : -1)
+}
+
 function pdfAction(action, viewer) {
     var controls = viewer.pdfControls
+    if (controls === undefined) return columnPdfAction(action, viewer)
     if (action === "focusNext" || action === "focusPrevious") {
         var step = action === "focusPrevious" ? -1 : 1
         var next = viewer.pdfControlIndex
@@ -62,8 +71,14 @@ function open(root) {
 function act(action, root) {
     root.preview.revealStrip()
     switch (action) {
-    case "cursorDown": Filter.moveCursor(root, 1); Marks.follow(root); follow(root); return
-    case "cursorUp": Filter.moveCursor(root, -1); Marks.follow(root); follow(root); return
+    // A Compare overlay names two files, so the cursor moving under it opens no other file in its place.
+    case "cursorDown":
+    case "cursorUp":
+        var direction = action === "cursorDown" ? 1 : -1
+        if (root.preview.isHtml && root.preview.markdownShown && root.preview.markdownShown.shownView === "rendered")
+            root.preview.markdownShown.scrollBy(direction)
+        else if (!root.preview.isCompare) { Filter.moveCursor(root, direction); Marks.follow(root); follow(root) }
+        return
     case "preview": root.preview.close(); return
     // Space closes every kind now, so playback has its own key; it self-guards, because p reaches
     // this only in the media context and a still image has nothing to play.
@@ -71,6 +86,8 @@ function act(action, root) {
         if (root.preview.isMedia) root.preview.togglePlay()
         return
     case "escape": root.preview.close(); return
+    // Compare's y: the whole patch goes to the clipboard; the overlay guards on its own kind.
+    case "copyPatch": root.preview.copyPatch(); return
     case "seekBack":
         if (root.preview.isPdf) root.preview.turnPage(-1)
         else root.preview.seek(-SEEK_MS)
@@ -89,17 +106,23 @@ function act(action, root) {
     case "expand": root.preview.toggleExpand(); return
     // MediaMute rule 5: the flag is the preview's to flip, and it silences without pausing.
     case "mute": root.preview.toggleMute(); return
-    // Decided 2026-10-03: r flips the open Markdown Quick Look between rendered and source, guarded on kind.
+    // r flips only the open document Quick Look between rendered and source.
     case "markdownView":
-        if (root.preview.isMarkdown) root.preview.toggleMarkdownView()
+        if (root.preview.isDocument) root.preview.toggleMarkdownView()
         return
-    // The Markdown bar's close mark is its one control: Tab and Shift+Tab take the keyboard onto it and off it, and Return on it closes.
+    // Focus.js lets w through for a code or text Quick Look only; the choice is remembered in ui.json.
+    case "toggleWrap": root.preview.toggleWrap(); return
+    // The text bar toggles Close; Compare owns its actual Copy and Close focus walk.
     case "focusNext":
     case "focusPrevious":
-        if (root.preview.isMarkdown) root.preview.toggleMarkdownClose()
+        if (root.preview.isCompare) {
+            var compare = root.preview.surfaceItem()
+            if (compare) compare.stepFocus(action === "focusPrevious")
+        } else if (root.preview.isFont) root.preview.focusFontControl()
+        else if (root.preview.hasBar) root.preview.toggleMarkdownClose()
         return
     case "open":
-        if (root.preview.isMarkdown && root.preview.markdownCloseFocused) root.preview.close()
+        if (root.preview.hasBar && root.preview.markdownCloseFocused) root.preview.close()
         return
     }
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # Exercise preview layout offscreen and fail on every engine binding loop, with no warning filter.
 set -u
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
@@ -13,7 +14,7 @@ trap cleanup EXIT
 mkdir -p "$test_root"/{config,home,state,cache,runtime} || exit 1
 chmod 700 "$test_root/runtime" || exit 1
 ln -s "$PWD/ui" "$test_root/config/flea" || exit 1
-ln -s "$(readlink -f ui/boot/Commons)" "$test_root/config/Commons" || exit 1
+headless_commons "$test_root" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$test_root/config/Ui" || exit 1
 cp tests/preview-layout-loop.qml "$test_root/config/shell.qml" || exit 1
 cat > "$test_root/mixed.md" <<'DOC'
@@ -50,6 +51,11 @@ done
 printf 'let long_line = "a long code line that wraps in Quick Look";\n%.0s' $(seq 1 "$overflow_lines") > "$test_root/code.rs"
 magick -size 400x560 xc:white -fill black -font Liberation-Sans -pointsize 30 \
     -annotate +40+80 'LAYOUT' "$test_root/page.pdf" || exit 1
+# Each scenario is a first visit in both hosts; relative Markdown images stay beside their documents.
+for scenario in $(seq 0 5); do
+    mkdir -p "$test_root/scenario-$scenario" || exit 1
+    cp "$test_root/"*.md "$test_root/plain.txt" "$test_root/code.rs" "$test_root/page.pdf" "$test_root/local.svg" "$test_root/scenario-$scenario/" || exit 1
+done
 for theme in dark light; do
     theme_home="$test_root/home-$theme"
     palette_dir="$theme_home/.local/state/omarchy/current/theme"

@@ -2,7 +2,9 @@
 # Every framed control in the real dialogs, cards, rows and Settings keeps Theme.chromeControlInset from the nearest rule and its host's edge, at stops 12, 14 and 16, at rest and focused; offscreen.
 set -u
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
+. "$(dirname "$0")/headless-commons.sh"
 cd "$(dirname "$0")/.." || exit 1
+python3 -B tests/framegap-picker.py || exit 1
 
 if ! command -v qs >/dev/null; then
     echo "framegap.sh: qs is not installed, cannot draw the hosts"
@@ -23,9 +25,9 @@ trap cleanup EXIT
 
 mkdir -p "$test_root/config" "$test_root/home/.config" "$test_root/state" "$test_root/data" "$test_root/cache" "$test_root/runtime" || exit 1
 chmod 700 "$test_root/runtime" || exit 1
+headless_commons "$test_root" || exit 1
 # The probe imports ui/ as Flea, and ui/'s qs.Commons resolves against this root, as it does from ui/boot.
 ln -s "$PWD/ui" "$test_root/config/flea" || exit 1
-ln -s "$(readlink -f ui/boot/Commons)" "$test_root/config/Commons" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$test_root/config/Ui" || exit 1
 cp tests/framegap.qml "$test_root/config/shell.qml" || exit 1
 cp tests/framegap.js "$test_root/config/framegap.js" || exit 1
@@ -44,7 +46,7 @@ output=$( ( env -u DISPLAY -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \
 verdict=0
 fail() { printf 'FAIL %s\n' "$1"; verdict=1; }
 # Sample input: "  INFO qml: FRAMEGAP DONE checks=4660 failed=0 controls=96 controlMiss=0 focusMiss=0" once, after "FRAMEGAP HOSTS 25 ArchiveCompressDialog,...". Every row is one frame side at one stop and state.
-expected_checks=4660 # 4708, less 48 rows of the menu cursor frame (ui/MenuRow.qml menuCursorFrame, RULINGS 141) now a fill with no frame side to measure
+expected_preclip_sides=4684 # 1171 frames; a fold stands for its four sides, independent of the Settings scroll position.
 expected_hosts=25
 # Every GapDialog, GapCheck, GapChrome and GapCrossing side is a control row and must be flagged; GapChrome only draws its frame focused.
 expected_controls=96 # 72 plus GapCrossing, 4 sides over 3 stops and 2 states
@@ -56,7 +58,12 @@ if printf '%s\n' "$output" | grep -q 'FRAMEGAP FAIL'; then
 fi
 # A CLIPPED row is scrolled content cut by the fold, judged by what it shows; only the Settings card scrolls, and the count is positional so it is not pinned.
 clipped_rows=$(printf '%s\n' "$output" | grep -ao 'FRAMEGAP CLIPPED.*')
-printf 'FRAMEGAP clipped rows: %s\n' "$(printf '%s' "$clipped_rows" | grep -c .)"
+clipped_count=$(printf '%s' "$clipped_rows" | grep -c .)
+printf 'FRAMEGAP clipped rows: %s\n' "$clipped_count"
+expected_checks=$((expected_preclip_sides - 4 * clipped_count))
+printf '%s\n' "$output" > "$test_root/framegap-report.log"
+python3 -B tests/framegap-report.py "$test_root/framegap-report.log" "$expected_preclip_sides" \
+    || fail 'the raw frame-side inventory is incomplete or changed'
 tab=$(printf '\t')
 # Sample input: "FRAMEGAP CLIPPED SettingsPanel general<TAB>Rectangle<TAB>..." is a Settings section row and kept out; "FRAMEGAP CLIPPED GapDialog<TAB>..." is foreign.
 foreign_clipped=$(printf '%s\n' "$clipped_rows" | grep -v -e '^$' -e "^FRAMEGAP CLIPPED SettingsPanel [^$tab]*$tab")

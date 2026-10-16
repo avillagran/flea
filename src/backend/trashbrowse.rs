@@ -1,7 +1,7 @@
 // GIO owns the shared Trash store; this worker owns only a listing and a reviewed confirmation.
 use crate::backend::opsreq::OpMsg;
 use crate::backend::trashdelete::Reviewed;
-use crate::backend::trashmanifest::{Cancellation, Manifest};
+use crate::backend::trashmanifest::{Cancellation, Manifest, Op, Outcome, Refusal};
 use crate::json::{escape, field_bool, field_str, field_str_array, field_usize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -11,7 +11,47 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const SUMMARY_BUDGET_MS: u64 = 2000;
-const STALE_CONFIRMATION: &str = "The Trash changed; confirm again.";
+
+// What a request answers when it fails: the stale flag is read from the variant, never from the sentence.
+enum Failure {
+    Stale(Refusal),
+    Said(String),
+}
+impl Failure {
+    fn shown(&self) -> String {
+        match self {
+            Self::Stale(refusal) => refusal.shown(),
+            Self::Said(text) => text.clone(),
+        }
+    }
+}
+impl From<String> for Failure {
+    fn from(text: String) -> Self { Self::Said(text) }
+}
+impl From<&str> for Failure {
+    fn from(text: &str) -> Self { Self::Said(text.into()) }
+}
+impl From<Refusal> for Failure {
+    fn from(refusal: Refusal) -> Self { Self::Said(refusal.shown()) }
+}
+// A review record that does not read back is the Trash changing under the review, so it is refused as that.
+fn damaged(detail: &str) -> Refusal {
+    Refusal::changed(detail).logged()
+}
+// What GIO said and what Flea could not do with it stay in the log; a person reads one sentence.
+fn unreadable(detail: impl Into<String>) -> Refusal {
+    Refusal::new(Outcome::Unreadable, detail).logged()
+}
+fn selection_changed(detail: impl Into<String>) -> Refusal {
+    Refusal::new(Outcome::SelectionChanged, detail).logged()
+}
+// True when the ask was to select; false once an action had begun.
+fn indistinct(selecting: bool) -> Refusal {
+    Refusal::new(Outcome::Indistinct(selecting), "The Trash provider did not report a stable item identity.").logged()
+}
+fn unchecked(op: Op) -> Refusal {
+    Refusal::new(Outcome::Unchecked(op), "The backing identity for the Trash item is unavailable.").logged()
+}
 
 #[derive(Clone, Debug, PartialEq)]
 struct Item {
@@ -34,6 +74,7 @@ struct Confirmation {
     trees: Manifest,
     listing: Vec<Item>,
     targets: Manifest,
+    count: usize,
     all: bool,
 }
 struct Selection {
@@ -85,41 +126,37 @@ impl Drop for TrashBrowser {
     fn drop(&mut self) { self.cancellation.next(); }
 }
 
-// The one sentence the Trash listing shows when it cannot be read; the cause goes to the log.
-const UNREAD: &str = "The Trash could not be read.";
-fn unread(cause: &str) -> String {
-    eprintln!("flea: {} {}", UNREAD, cause);
-    UNREAD.to_string()
-}
-fn gio(args: &[&str]) -> Result<String, String> {
+fn gio(args: &[&str]) -> Result<String, Refusal> {
     let prefix = super::trash::gio_prefix();
-    let output = Command::new(&prefix[0])
+    answer(Command::new(&prefix[0])
         .env("LC_ALL", "C")
         .args(&prefix[1..])
         .args(args)
-        .output()
-        .map_err(|e| unread(&format!("The Trash helper could not run: {}", crate::error::io_message(&e))))?;
+        .output())
+}
+fn answer(output: std::io::Result<std::process::Output>) -> Result<String, Refusal> {
+    let output = output.map_err(|e| unreadable(format!("Could not start the Trash helper: {}", e)))?;
     if !output.status.success() {
         if matches!(output.status.code(), Some(124 | 137)) {
-            return Err("The Trash took too long to answer.".into());
+            return Err(Refusal::new(Outcome::TookTooLong, "The Trash helper exceeded its deadline.").logged());
         }
-        return Err(unread(String::from_utf8_lossy(&output.stderr).lines().last().unwrap_or("the Trash helper failed")));
+        return Err(unreadable(String::from_utf8_lossy(&output.stderr).lines().last().unwrap_or("The gio Trash helper failed.")));
     }
-    String::from_utf8(output.stdout).map_err(|_| unread("the Trash helper answered with text that was not valid"))
+    String::from_utf8(output.stdout).map_err(|_| unreadable("The Trash helper returned invalid text."))
 }
 
 // Sample input: "trash:///a.txt\t/home/gm/a.txt\n"; malformed framing must not silently lose an item.
-fn parse_list(text: &str) -> Result<Vec<Item>, String> {
+fn parse_list(text: &str) -> Result<Vec<Item>, Refusal> {
     let mut items = Vec::new();
     for line in text.lines() {
         let (uri, original) = line
             .split_once('\t')
-            .ok_or_else(|| unread("the Trash helper listed an item the wrong way"))?;
+            .ok_or_else(|| unreadable("The Trash helper returned an unreadable listing."))?;
         if !uri.starts_with("trash:///")
             || uri.len() <= "trash:///".len()
             || !original.starts_with('/')
         {
-            return Err(unread("the Trash helper named an item the wrong way"));
+            return Err(unreadable("The Trash helper returned an invalid item identity."));
         }
         items.push(Item {
             uri: uri.into(),
@@ -128,12 +165,51 @@ fn parse_list(text: &str) -> Result<Vec<Item>, String> {
     }
     items.sort_by(|a, b| a.uri.cmp(&b.uri));
     if items.windows(2).any(|pair| pair[0].uri == pair[1].uri) {
-        return Err(unread("the Trash helper listed an item twice"));
+        return Err(unreadable("The Trash helper returned duplicate item identities."));
     }
     Ok(items)
 }
-fn list() -> Result<Vec<Item>, String> {
-    parse_list(&gio(&["trash", "--list"])?)
+fn list() -> Result<Vec<Item>, Refusal> {
+    list_with(gio)
+}
+
+// The listing over any reader of gio's text, so a test can feed the two outputs through the real join.
+fn list_with(read: impl Fn(&[&str]) -> Result<String, Refusal>) -> Result<Vec<Item>, Refusal> {
+    let mut items = parse_list(&read(&["trash", "--list"])?)?;
+    // One gio call dates every volume's items; a failed call leaves the order by uri.
+    let dates = parse_dates(&read(&["list", "-u", "-a", "trash::deletion-date", "trash:///"]).unwrap_or_default());
+    newest_first(&mut items, |item| dates.get(&item.uri).cloned().unwrap_or_default());
+    Ok(items)
+}
+// Two reads of one Trash hold the same items whatever order each came in: a dates call that failed in one read orders it by uri.
+fn same_items(a: &[Item], b: &[Item]) -> bool {
+    let mut a = a.to_vec();
+    let mut b = b.to_vec();
+    a.sort_by(|x, y| x.uri.cmp(&y.uri));
+    b.sort_by(|x, y| x.uri.cmp(&y.uri));
+    a == b
+}
+// Membership by uri, not by position: the listing is in date order, so a uri search over it would miss items.
+fn listed_uris(items: &[Item]) -> HashSet<&str> {
+    items.iter().map(|item| item.uri.as_str()).collect()
+}
+
+// Sample input, gio list -u -a trash::deletion-date trash:///: "trash:///a.txt\t0\t(regular)\ttrash::deletion-date=2026-09-08T10:00:00\n"; local clock time with no offset, so the repeated fall-back hour can order two items wrongly, accepted because gio gives no offset.
+fn parse_dates(text: &str) -> HashMap<String, String> {
+    text.lines()
+        .filter_map(|line| {
+            let mut fields = line.split('\t');
+            let uri = fields.next()?;
+            let date = fields.find_map(|field| field.strip_prefix("trash::deletion-date="))?;
+            Some((uri.to_string(), date.to_string()))
+        })
+        .collect()
+}
+// Newest deletion first, ties by uri, so the order is total and two listings of one Trash agree.
+fn newest_first(items: &mut Vec<Item>, date_of: impl Fn(&Item) -> String) {
+    let mut dated: Vec<(String, Item)> = items.drain(..).map(|item| (date_of(&item), item)).collect();
+    dated.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.uri.cmp(&b.1.uri)));
+    items.extend(dated.into_iter().map(|(_, item)| item));
 }
 
 // Sample input, gio info: "  standard::size: 123\n  trash::deletion-date: 2026-09-08T10:00:00".
@@ -144,11 +220,11 @@ fn attribute<'a>(text: &'a str, name: &str) -> Option<&'a str> {
             .and_then(|rest| rest.strip_prefix(": "))
     })
 }
-fn detail(item: &Item) -> Result<Detail, String> {
+fn detail(item: &Item) -> Result<Detail, Refusal> {
     let text = gio(&["info", "--nofollow-symlinks", "--attributes=standard::size,standard::type,trash::deletion-date,id::file,id::filesystem,standard::icon,standard::target-uri", &item.uri])?;
     let size = attribute(&text, "standard::size")
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| unread("the Trash helper gave no size for an item"))?;
+        .ok_or_else(|| unreadable("The Trash helper did not report the item's size."))?;
     let identity = match (
         attribute(&text, "id::filesystem"),
         attribute(&text, "id::file"),
@@ -202,41 +278,120 @@ fn selection_identity(item: &Detail) -> String {
         escape(&item.backing.as_ref().map(Reviewed::selection_identity).unwrap_or_default()))
 }
 
-fn require_selected_identity(item: &Detail, expected: &str) -> Result<(), String> {
-    if expected.is_empty() || item.identity.is_empty() || selection_identity(item) != expected {
-        return Err("The Trash selection changed; select the items again.".into());
+// A window or a validity check asks this without refusing anything, so only the refusal below logs.
+fn selection_current(item: &Detail, expected: &str) -> bool {
+    !(expected.is_empty() || item.identity.is_empty() || selection_identity(item) != expected)
+}
+fn require_selected_identity(item: &Detail, expected: &str) -> Result<(), Refusal> {
+    if !selection_current(item, expected) {
+        return Err(selection_changed(format!("Trash selection changed for {}.", item.item.uri)));
     }
     Ok(())
 }
 
-fn record_text(bytes: Vec<u8>) -> Result<String, String> {
-    String::from_utf8(bytes).map_err(|_| "Invalid text in Trash review.".into())
+fn record_text(bytes: Vec<u8>) -> Result<String, Refusal> {
+    String::from_utf8(bytes).map_err(|_| damaged("Invalid text in Trash review."))
 }
-fn record_item(text: &str) -> Result<Item, String> {
-    Ok(Item { uri: field_str(text, "uri").ok_or("Missing reviewed Trash URI.")?,
-        original: field_str(text, "original").ok_or("Missing reviewed original path.")? })
+fn record_item(text: &str) -> Result<Item, Refusal> {
+    Ok(Item { uri: field_str(text, "uri").ok_or_else(|| damaged("Missing reviewed Trash URI."))?,
+        original: field_str(text, "original").ok_or_else(|| damaged("Missing reviewed original path."))? })
 }
-fn save_detail(item: &Detail) -> Result<String, String> {
+fn save_detail(item: &Detail) -> Result<String, Refusal> {
     let mut text = row(item);
     text.pop();
     text.push_str(&format!(r#","providerIdentity":"{}","backing":"{}"}}"#,
-        escape(&item.identity), escape(&item.backing.as_ref().ok_or("Missing Trash backing review.")?.saved()?)));
+        escape(&item.identity), escape(&item.backing.as_ref().ok_or_else(|| damaged("Missing Trash backing review."))?.saved()?)));
     Ok(text)
 }
-fn load_detail(text: &str, trees: &Manifest) -> Result<Detail, String> {
+fn load_detail(text: &str, trees: &Manifest) -> Result<Detail, Refusal> {
     Ok(Detail {
         item: record_item(text)?,
-        size: field_usize(text, "size").ok_or("Missing reviewed Trash size.")? as u64,
+        size: field_usize(text, "size").ok_or_else(|| damaged("Missing reviewed Trash size."))? as u64,
         deleted: field_str(text, "deleted").unwrap_or_default(),
-        identity: field_str(text, "providerIdentity").ok_or("Missing reviewed provider identity.")?,
+        identity: field_str(text, "providerIdentity").ok_or_else(|| damaged("Missing reviewed provider identity."))?,
         directory: field_bool(text, "directory"),
         icon: field_str(text, "icon").unwrap_or_default(),
-        backing: Some(Reviewed::from_saved(&field_str(text, "backing").ok_or("Missing Trash backing review.")?, trees)?),
+        backing: Some(Reviewed::from_saved(&field_str(text, "backing").ok_or_else(|| damaged("Missing Trash backing review."))?, trees)?),
     })
 }
 fn failure(item: &Item, expected: &str, error: &str) -> String {
     format!(r#"{{"uri":"{}","name":"{}","identity":"{}","error":"{}"}}"#,
         escape(&item.uri), escape(item.original.rsplit('/').next().unwrap_or(&item.original)), escape(expected), escape(error))
+}
+fn delete_one(item: &Detail, recovery: &Result<PathBuf, String>) -> Result<(), String> {
+    let reviewed = item.backing.as_ref().ok_or_else(|| unchecked(Op::Delete).shown())?;
+    reviewed.delete(recovery.as_ref().map_err(Clone::clone)?).map_err(String::from)
+}
+// A record that will not read back fails its own item, so items already deleted stay counted; a record with no readable uri gets an empty one.
+fn unread(item: Option<Item>) -> String {
+    let item = item.unwrap_or(Item { uri: String::new(), original: String::new() });
+    failure(&item, "", "One Trash record could not be read, so that item was left in place.")
+}
+fn unread_many(count: usize) -> String {
+    if count == 1 { return unread(None); }
+    failure(&Item { uri: String::new(), original: String::new() }, "", &format!("{count} Trash records could not be read, so those items were left in place."))
+}
+// Prepare appends one item per target in target order and fails whole on any error, so item `reached` is target `reached`; past a damaged frame targets are read backward and the stretch between is counted.
+fn left_unread(confirmation: &Confirmation, reached: usize) -> (Vec<String>, usize) {
+    let left = confirmation.count.saturating_sub(reached).max(1);
+    let (mut rows, mut unnamed, mut offset) = (Vec::new(), 0, 0);
+    let name = |bytes: Vec<u8>, rows: &mut Vec<String>, unnamed: &mut usize| match record_text(bytes).ok().and_then(|text| record_item(&text).ok()) {
+        Some(item) => rows.push(unread(Some(item))),
+        None => *unnamed += 1,
+    };
+    let records = confirmation.targets.records();
+    let mut index = 0;
+    while let Ok(Some(bytes)) = records.next(&mut offset) {
+        if index >= reached { name(bytes, &mut rows, &mut unnamed); }
+        index += 1;
+    }
+    let mut back = records.end();
+    if offset != back {
+        let mut from_end = confirmation.count;
+        while back > offset {
+            let Ok(Some(bytes)) = records.previous(&mut back) else { break };
+            from_end = from_end.saturating_sub(1);
+            if from_end >= reached { name(bytes, &mut rows, &mut unnamed); }
+        }
+    }
+    unnamed += left.saturating_sub(rows.len() + unnamed);
+    if unnamed > 0 { rows.push(unread_many(unnamed)); }
+    (rows, left)
+}
+fn delete_confirmed(confirmation: &Confirmation, recovery: &Result<PathBuf, String>) -> String {
+    let mut done = 0;
+    let mut failures = Vec::new();
+    let mut offset = 0;
+    let mut reached = 0;
+    let mut folded = 0;
+    loop {
+        let bytes = match confirmation.items.records().next(&mut offset) {
+            Ok(Some(bytes)) => bytes,
+            Ok(None) => break,
+            // The offset does not move past a frame that cannot be read, so the records after it cannot be found there.
+            Err(error) => {
+                damaged(&error);
+                let (rows, left) = left_unread(confirmation, reached);
+                folded += left.saturating_sub(rows.len());
+                failures.extend(rows);
+                break;
+            }
+        };
+        reached += 1;
+        let text = match record_text(bytes) {
+            Ok(text) => text,
+            Err(_) => { failures.push(unread(None)); continue; }
+        };
+        match load_detail(&text, &confirmation.trees) {
+            Ok(item) => match delete_one(&item, recovery) {
+                Ok(()) => done += 1,
+                Err(error) => failures.push(failure(&item.item, &surviving_identity(&item), &error)),
+            },
+            Err(_) => failures.push(unread(record_item(&text).ok())),
+        }
+    }
+    // `failed` counts items, and a row for records that could not be read stands for several of them.
+    format!(r#""done":{},"failed":{},"failures":[{}]"#, done, failures.len() + folded, failures.join(","))
 }
 fn surviving_identity(item: &Detail) -> String {
     if let Ok(current) = detail(&item.item) {
@@ -259,16 +414,16 @@ impl Session {
                 escape(&op),
                 fields
             ),
-            Err(error) => format!(
+            Err(failure) => format!(
                 r#"{{"t":"trashbrowse","id":{},"op":"{}","ok":false,"stale":{},"error":"{}"}}"#,
                 id,
                 escape(&op),
-                op == "delete" && error == STALE_CONFIRMATION,
-                escape(&error)
+                op == "delete" && matches!(failure, Failure::Stale(_)),
+                escape(&failure.shown())
             ),
         }
     }
-    fn execute(&mut self, op: &str, line: &str) -> Result<String, String> {
+    fn execute(&mut self, op: &str, line: &str) -> Result<String, Failure> {
         self.cancellation.check()?;
         match op {
             "list" => {
@@ -286,13 +441,13 @@ impl Session {
                 Ok(format!("{},\"present\":[{}],\"recoveredCount\":{},\"recoveryErrors\":[{}]", window, present.join(","),
                     recovery.recovered, recovery.failures.iter().map(|error| format!("\"{}\"", escape(error))).collect::<Vec<_>>().join(",")))
             }
-            "summary" => self.summary(),
-            "select" => self.select_all(),
-            "window" => self.window(
+            "summary" => Ok(self.summary()?),
+            "select" => Ok(self.select_all()?),
+            "window" => Ok(self.window(
                 field_usize(line, "start").unwrap_or(0),
                 field_usize(line, "count").unwrap_or(100),
-            ),
-            "prepare" => self.prepare(line),
+            )?),
+            "prepare" => Ok(self.prepare(line)?),
             "check" => {
                 let valid = self.valid(field_usize(line, "token").unwrap_or(0))?;
                 Ok(format!(r#""valid":{}"#, valid))
@@ -302,7 +457,7 @@ impl Session {
                 if field_bool(line, "clearSelection") { self.selection = None; }
                 Ok(r#""cancelled":true"#.into())
             }
-            "restore" => self.restore(line),
+            "restore" => Ok(self.restore(line)?),
             "delete" => {
                 // A target whose original sits on a pending mount waits, checked before any listing so the refusal needs no trash round trip.
                 if let Some(confirmation) = self.confirmation.as_ref().filter(|c| c.token == field_usize(line, "token").unwrap_or(0)) {
@@ -311,28 +466,13 @@ impl Session {
                     }
                 }
                 if !self.valid(field_usize(line, "token").unwrap_or(0))? {
-                    return Err(STALE_CONFIRMATION.into());
+                    return Err(Failure::Stale(Refusal::new(Outcome::ConfirmAgain, "Trash changed; confirm again.").logged()));
                 }
                 let confirmation = self
                     .confirmation
                     .take()
                     .ok_or("Trash confirmation expired.")?;
-                let mut done = 0;
-                let mut failures = Vec::new();
-                let mut offset = 0;
-                while let Some(bytes) = confirmation.items.records().next(&mut offset)? {
-                    let item = load_detail(&record_text(bytes)?, &confirmation.trees)?;
-                    match item.backing.as_ref().ok_or("This Trash cannot be checked, so nothing can be deleted.".to_string()).and_then(|reviewed| reviewed.delete(&crate::backend::trashdelete::recovery_root()?)) {
-                        Ok(()) => done += 1,
-                        Err(error) => failures.push(failure(&item.item, &surviving_identity(&item), &error)),
-                    }
-                }
-                Ok(format!(
-                    r#""done":{},"failed":{},"failures":[{}]"#,
-                    done,
-                    failures.len(),
-                    failures.join(",")
-                ))
+                Ok(delete_confirmed(&confirmation, &crate::backend::trashdelete::recovery_root()))
             }
             _ => Err("Unknown Trash request.".into()),
         }
@@ -350,16 +490,17 @@ impl Session {
         let mut stale = false;
         let token = self.selection.as_ref().map(|selection| selection.token).unwrap_or(0);
         if let Some(selection) = &self.selection {
+            let listed = listed_uris(&self.items);
             let mut offset = 0;
             while let Some(bytes) = selection.items.records().next(&mut offset)? {
                 self.cancellation.check()?;
                 let text = record_text(bytes)?;
                 let item = record_item(&text)?;
-                if self.items.binary_search_by(|current| current.uri.cmp(&item.uri)).is_err() { continue; }
+                if !listed.contains(item.uri.as_str()) { continue; }
                 selected_count += 1;
                 if let Some(current) = visible.get(&item.uri) {
                     let expected = field_str(&text, "identity").unwrap_or_default();
-                    if require_selected_identity(current, &expected).is_err() { stale = true; }
+                    if !selection_current(current, &expected) { stale = true; }
                     else { members.insert(item.uri); }
                 }
             }
@@ -383,11 +524,11 @@ impl Session {
             self.cancellation.check()?;
             let current = detail(item)?;
             if current.identity.is_empty() || current.backing.is_none() {
-                return Err("Items in this Trash cannot be told apart, so they cannot be selected.".into());
+                return Err(indistinct(true).into());
             }
             records.append(row(&current).as_bytes())?;
         }
-        if list()? != self.items { return Err("Trash changed while selecting its contents; select again.".into()); }
+        if !same_items(&list()?, &self.items) { return Err("Trash changed while selecting its contents; select again.".into()); }
         let mut offset = 0;
         while let Some(bytes) = records.records().next(&mut offset)? {
             self.cancellation.check()?;
@@ -429,7 +570,7 @@ impl Session {
         let identities = field_str_array(line, "identities");
         let all = field_bool(line, "all");
         if !all && uris.len() != identities.len() {
-            return Err("The Trash selection changed; select the items again.".into());
+            return Err(selection_changed("The reviewed identity for the Trash selection is missing.").into());
         }
         let mut explicit: HashMap<_, _> = uris.iter().zip(&identities).collect();
         let exclusions: HashSet<_> = field_str_array(line, "exclude").into_iter().collect();
@@ -442,7 +583,7 @@ impl Session {
             }
         } else if token > 0 {
             let selection = self.selection.as_ref().filter(|selection| selection.token == token)
-                .ok_or("The Trash selection changed; select the items again.")?;
+                .ok_or_else(|| selection_changed("The saved Trash selection is no longer current."))?;
             let mut offset = 0;
             while let Some(bytes) = selection.items.records().next(&mut offset)? {
                 self.cancellation.check()?;
@@ -457,8 +598,8 @@ impl Session {
             for uri in &uris {
                 let Some(expected) = explicit.remove(uri) else { continue; };
                 let item = self.items.iter().find(|item| &item.uri == uri)
-                    .ok_or("The Trash selection changed; select the items again.")?;
-                if expected.is_empty() { return Err("The Trash selection changed; select the items again.".into()); }
+                    .ok_or_else(|| selection_changed("The saved Trash selection is no longer current."))?;
+                if expected.is_empty() { return Err(selection_changed("The reviewed identity for the Trash selection is missing.").into()); }
                 targets.append(format!(r#"{{"uri":"{}","original":"{}","identity":"{}"}}"#,
                     escape(uri), escape(&item.original), escape(expected)).as_bytes())?;
             }
@@ -515,15 +656,16 @@ impl Session {
             if !all && refresh_token == 0 {
                 require_selected_identity(&current, &field_str(&text, "identity").unwrap_or_default())?;
             }
-            if current.identity.is_empty() { return Err("Items in this Trash cannot be told apart, so they cannot be selected.".into()); }
-            let size = current.backing.as_mut().ok_or("This Trash cannot be checked, so nothing can be deleted.")?
+            if current.identity.is_empty() { return Err(indistinct(false).into()); }
+            let size = current.backing.as_mut()
+                .ok_or_else(|| unchecked(Op::Delete))?
                 .snapshot(&mut trees, &self.scratch, &self.cancellation)?;
             bytes = bytes.checked_add(size).ok_or("Trash byte total exceeds the supported range.")?;
             items.append(save_detail(&current)?.as_bytes())?;
             count += 1;
         }
         self.next_token += 1;
-        self.confirmation = Some(Confirmation { token: self.next_token, items, trees, listing: self.items.clone(), targets, all });
+        self.confirmation = Some(Confirmation { token: self.next_token, items, trees, listing: self.items.clone(), targets, count, all });
         if !self.valid(self.next_token)? {
             self.confirmation = None;
             return Err("Trash changed while reviewing its contents; try the action again.".into());
@@ -536,7 +678,7 @@ impl Session {
             Some(c) if c.token == token => c,
             _ => return Ok(false),
         };
-        if list()? != confirmation.listing { return Ok(false); }
+        if !same_items(&list()?, &confirmation.listing) { return Ok(false); }
         let mut cursor = 0;
         while let Some(bytes) = confirmation.items.records().next(&mut cursor)? {
             self.cancellation.check()?;
@@ -544,7 +686,7 @@ impl Session {
             let Some(backing) = old.backing.as_ref() else { return Ok(false); };
             if !backing.contents_unchanged(&self.cancellation)? { return Ok(false); }
             let current = detail(&old.item)?;
-            if require_selected_identity(&current, &selection_identity(&old)).is_err() { return Ok(false); }
+            if !selection_current(&current, &selection_identity(&old)) { return Ok(false); }
         }
         Ok(true)
     }
@@ -562,12 +704,14 @@ impl Session {
             let text = record_text(bytes)?;
             let item = record_item(&text)?;
             let mut retained = field_str(&text, "identity").unwrap_or_default();
-            let restored = detail(&item).and_then(|current| {
+            let restored = detail(&item).map_err(String::from).and_then(|current| {
                 if !field_bool(line, "all") {
                     require_selected_identity(&current, &field_str(&text, "identity").unwrap_or_default())?;
                 }
-                let result = current.backing.as_ref().ok_or("This Trash cannot be checked, so nothing can be restored.")?
-                    .restore(&PathBuf::from(&item.original), &crate::backend::trashdelete::recovery_root()?);
+                let result = current.backing.as_ref()
+                    .ok_or_else(|| unchecked(Op::Restore))?
+                    .restore(&PathBuf::from(&item.original), &crate::backend::trashdelete::recovery_root()?)
+                    .map_err(String::from);
                 if result.is_err() { retained = surviving_identity(&current); }
                 result
             });
@@ -583,6 +727,8 @@ impl Session {
 
 }
 
+#[cfg(test)]
+mod refusal_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,6 +748,87 @@ mod tests {
             parse_list("trash:///a\t/tmp/a b\n").unwrap()[0].original,
             "/tmp/a b"
         );
+    }
+    #[test]
+    fn listing_is_newest_deleted_first_and_ties_break_by_uri() {
+        let item = |name: &str| Item { uri: format!("trash:///{}", name), original: format!("/home/u/{}", name) };
+        let mut items = vec![item("b.txt"), item("a.txt"), item("c.txt")];
+        let date = |item: &Item| match item.uri.as_str() {
+            "trash:///a.txt" => "2026-10-05T09:00:00".to_string(),
+            _ => "2026-10-02T10:00:00".to_string(),
+        };
+        newest_first(&mut items, date);
+        let order: Vec<_> = items.iter().map(|item| item.uri.as_str()).collect();
+        assert_eq!(order, ["trash:///a.txt", "trash:///b.txt", "trash:///c.txt"]);
+        // A listing in the other uri order lands on the same sequence, so two reads of one Trash agree.
+        let mut reversed = vec![item("c.txt"), item("b.txt"), item("a.txt")];
+        newest_first(&mut reversed, date);
+        assert_eq!(reversed, items);
+    }
+    #[test]
+    fn deletion_dates_come_from_one_gio_list() {
+        let text = "trash:///a%20b.txt\t0\t(regular)\ttrash::deletion-date=2026-09-08T10:00:00\ntrash:///c\t4096\t(directory)\ntrash:///d\t1\t(regular)\ttrash::deletion-date=2026-09-09T11:30:00\n";
+        let dates = parse_dates(text);
+        assert_eq!(dates.get("trash:///a%20b.txt").map(String::as_str), Some("2026-09-08T10:00:00"));
+        assert_eq!(dates.get("trash:///d").map(String::as_str), Some("2026-09-09T11:30:00"));
+        assert_eq!(dates.get("trash:///c"), None);
+        assert!(parse_dates("").is_empty());
+    }
+    #[test]
+    fn an_item_without_a_date_sorts_last() {
+        let item = |name: &str| Item { uri: format!("trash:///{}", name), original: format!("/home/u/{}", name) };
+        let mut items = vec![item("a"), item("b"), item("c")];
+        newest_first(&mut items, |item| if item.uri.ends_with('b') { "2026-10-01T00:00:00".into() } else { String::new() });
+        let order: Vec<_> = items.iter().map(|item| item.uri.as_str()).collect();
+        assert_eq!(order, ["trash:///b", "trash:///a", "trash:///c"]);
+    }
+    // gio's two outputs for one Trash, one escaped name in both: the listing in uri order, the dates by uri.
+    const TRASH_LIST: &str = "trash:///a%20b.txt\t/home/u/a b.txt\ntrash:///c.txt\t/home/u/c.txt\ntrash:///z.txt\t/home/u/z.txt\n";
+    const TRASH_DATES: &str = "trash:///a%20b.txt\t0\t(regular)\ttrash::deletion-date=2026-10-05T09:00:00\ntrash:///c.txt\t0\t(regular)\ttrash::deletion-date=2026-10-01T09:00:00\ntrash:///z.txt\t0\t(regular)\ttrash::deletion-date=2026-10-03T09:00:00\n";
+    fn read_gio(dates: Result<&'static str, &'static str>) -> impl Fn(&[&str]) -> Result<String, Refusal> {
+        move |args: &[&str]| match args[0] {
+            "trash" => Ok(TRASH_LIST.to_string()),
+            _ => dates.map(String::from).map_err(unreadable),
+        }
+    }
+    fn uris(items: &[Item]) -> Vec<&str> {
+        items.iter().map(|item| item.uri.as_str()).collect()
+    }
+    #[test]
+    fn the_real_listing_joins_dates_to_uris_newest_first() {
+        let items = list_with(read_gio(Ok(TRASH_DATES))).unwrap();
+        assert_eq!(uris(&items), ["trash:///a%20b.txt", "trash:///z.txt", "trash:///c.txt"]);
+        assert_eq!(items[0].original, "/home/u/a b.txt");
+    }
+    #[test]
+    fn a_failed_dates_call_keeps_the_uri_order() {
+        let items = list_with(read_gio(Err("gio failed"))).unwrap();
+        assert_eq!(uris(&items), ["trash:///a%20b.txt", "trash:///c.txt", "trash:///z.txt"]);
+    }
+    #[test]
+    fn a_failed_trash_list_is_an_error() {
+        assert!(list_with(|_: &[&str]| Err(unreadable("gio failed"))).is_err());
+    }
+    #[test]
+    fn two_reads_of_one_trash_are_unchanged_whatever_their_order() {
+        let dated = list_with(read_gio(Ok(TRASH_DATES))).unwrap();
+        let by_uri = list_with(read_gio(Err("timed out"))).unwrap();
+        assert_ne!(dated, by_uri);
+        assert!(same_items(&dated, &by_uri));
+        assert!(same_items(&by_uri, &dated));
+        // A different item or a different original is a change.
+        let mut other = by_uri.clone();
+        other[1].original = "/home/u/elsewhere".into();
+        assert!(!same_items(&dated, &other));
+        assert!(!same_items(&dated, &by_uri[1..]));
+    }
+    #[test]
+    fn membership_finds_every_item_of_a_date_ordered_listing() {
+        let items = list_with(read_gio(Ok(TRASH_DATES))).unwrap();
+        assert_ne!(uris(&items), { let mut sorted = uris(&items); sorted.sort(); sorted });
+        let listed = listed_uris(&items);
+        for item in &items { assert!(listed.contains(item.uri.as_str()), "{} missed", item.uri); }
+        assert!(!listed.contains("trash:///absent"));
     }
     #[test]
     fn selected_targets_require_known_paths_and_original_identities() {
@@ -648,7 +875,7 @@ mod tests {
         targets.append(br#"{"uri":"trash:///a","original":"/old/a","identity":"old-inode"}"#).unwrap();
         targets.append(br#"{"uri":"trash:///gone","original":"/old/gone","identity":"gone-inode"}"#).unwrap();
         let confirmation = Confirmation { token: 3, items: Manifest::new(d.path()).unwrap(),
-            trees: Manifest::new(d.path()).unwrap(), listing: Vec::new(), targets, all: false };
+            trees: Manifest::new(d.path()).unwrap(), listing: Vec::new(), targets, count: 0, all: false };
         let session = Session { items: parse_list("trash:///a\t/new/a\ntrash:///new\t/new\n").unwrap(),
             scratch: d.path().to_path_buf(), ..Session::default() };
         let refreshed = session.refreshed_targets(&confirmation).unwrap();
@@ -672,6 +899,24 @@ mod tests {
     #[test]
     fn expired_confirmation_never_reaches_provider() {
         assert!(!Session::default().valid(1).unwrap());
+    }
+    // The flag comes from the typed failure, so a sentence that reads the same on another op never sets it.
+    #[test]
+    fn a_stale_delete_sets_the_flag_and_says_confirm_again_with_its_detail_logged() {
+        let seen = crate::backend::trashmanifest::logged().len();
+        let stale = Session::default().handle(r#"{"c":"trashbrowse","op":"delete","id":4,"token":9}"#);
+        assert!(stale.contains(r#""ok":false,"stale":true,"error":"The Trash changed, so nothing was done; confirm again.""#), "{}", stale);
+        assert!(crate::backend::trashmanifest::logged().split_off(seen).iter().any(|line| line.contains("Trash changed; confirm again.")));
+        let unknown = Session::default().handle(r#"{"c":"trashbrowse","op":"nothing","id":4}"#);
+        assert!(unknown.contains(r#""stale":false,"error":"Unknown Trash request.""#), "{}", unknown);
+    }
+    #[test]
+    fn a_review_record_that_does_not_read_back_says_the_trash_changed_and_logs_which() {
+        let seen = crate::backend::trashmanifest::logged().len();
+        let refused = record_item(r#"{"original":"/o"}"#).unwrap_err();
+        assert_eq!(refused.shown(), "The Trash changed, so nothing was done. Try again.");
+        assert!(crate::backend::trashmanifest::logged().split_off(seen).iter().any(|line| line.contains("Missing reviewed Trash URI.")));
+        assert_eq!(String::from(record_text(vec![0xff]).unwrap_err()), "The Trash changed, so nothing was done. Try again.");
     }
     #[test]
     fn attributes_require_exact_names() {
@@ -760,7 +1005,7 @@ mod tests {
         targets.append(format!(r#"{{"uri":"trash:///a.txt","original":"{}/a.txt","identity":""}}"#,
             remote.path().to_string_lossy()).as_bytes()).unwrap();
         let confirmation = Confirmation { token: 7, items: Manifest::new(remote.path()).unwrap(),
-            trees: Manifest::new(remote.path()).unwrap(), listing: Vec::new(), targets, all: false };
+            trees: Manifest::new(remote.path()).unwrap(), listing: Vec::new(), targets, count: 0, all: false };
         let delete = r#"{"c":"trashbrowse","op":"delete","id":9,"token":7}"#;
         let mut held = Session { confirmation: Some(confirmation), scratch: remote.path().to_path_buf(),
             pending: vec![remote.path().to_path_buf()], body, ..Session::default() };
@@ -772,7 +1017,7 @@ mod tests {
         targets.append(format!(r#"{{"uri":"trash:///a.txt","original":"{}/a.txt","identity":""}}"#,
             remote.path().to_string_lossy()).as_bytes()).unwrap();
         let confirmation = Confirmation { token: 7, items: Manifest::new(remote.path()).unwrap(),
-            trees: Manifest::new(remote.path()).unwrap(), listing: Vec::new(), targets, all: false };
+            trees: Manifest::new(remote.path()).unwrap(), listing: Vec::new(), targets, count: 0, all: false };
         let mut free = Session { confirmation: Some(confirmation), scratch: remote.path().to_path_buf(), ..Session::default() };
         let past = free.handle(delete);
         assert!(!past.contains("already running"), "a delete elsewhere runs past the gate: {}", past);

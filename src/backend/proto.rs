@@ -52,6 +52,11 @@ pub enum Request {
     Meta { row: usize, text: bool, media: bool, archive: bool, token: usize },
     // The cursor row's two-byte shebang probe for the Make executable row; see docs/protocol.md "shebang".
     Shebang { path: String, id: usize },
+    // The code preview's coloured lines for a file or a text the client holds; the wire lives in codereq.rs.
+    Code(super::codereq::Ask),
+    Html(super::htmlreq::Ask),
+    // Two regular files answered with their unified diff, or the reason there is none; the wire lives in compare.rs.
+    Compare(super::compare::Ask),
     // One tag change across rows of the listing in force: add, remove, toggle or clear.
     SetTags { rows: Vec<usize>, op: String, tag: String },
     // Which of Flea's seven tags those rows all carry or some carry, read only; see docs/protocol.md "tagstates".
@@ -62,6 +67,10 @@ pub enum Request {
     Peek { path: String, first: usize, hidden: bool, hidden_last: bool, focus: String, watch: bool, keep: Vec<String>, by: Option<String>, desc: bool },
     // A PDF fetched into a session-private copy under a deadline, so a hung mount never freezes the window.
     PdfCopy { id: usize, slot: String, path: String },
+    // An office document converted once to a cached PDF by LibreOffice; answered ready, converting or failed.
+    OfficePdf { id: usize, path: String },
+    // Quick Look's font page: the facts and three sample images for one font; see src/backend/fontinfo/render.rs.
+    FontLook(super::fontinfo::render::Ask),
     // op is "compress" or "extract"; a compress names paths and a format, an extract names one path.
     // password travels this stdin wire and leaves it only on the tool's own stdin pipe, never in argv.
     Archive { op: String, paths: Vec<String>, path: String, dest: String, format: String, menu_id: usize,
@@ -86,7 +95,7 @@ pub enum Request {
     LocalSend { op: String, peer: String, paths: Vec<String>, id: usize },
     TrashBrowse { line: String },
     // The device of each path named, symlinks followed, for the drop verb of a target that is not the listing; see docs/protocol.md "devs".
-    Devs { paths: Vec<String> },
+    Devs { paths: Vec<String>, id: usize },
     // The path bar's folder jump: the favourites and recent files the client read, joined with zoxide's ranking.
     Jump { id: usize, ranking: usize, favourites: Vec<String>, recent: Vec<String> },
     // The system clipboard for files, owned across windows; see docs/protocol.md "clip".
@@ -248,10 +257,15 @@ pub fn parse_request(line: &str) -> Request {
             strip: field_bool(line, "strip"),
         },
         Some("formats") => Request::Formats { id: field_usize(line, "id").unwrap_or(0) },
+        Some("fontlook") => Request::FontLook(super::fontinfo::render::Ask::parse(line)),
         Some("pdfcopy") => Request::PdfCopy {
             id: field_usize(line, "id").unwrap_or(0),
             // Absent is one viewer, so an older client's fetch keeps the shared slot.
             slot: field_str(line, "slot").unwrap_or_default(),
+            path: field_str(line, "path").unwrap_or_default(),
+        },
+        Some("officepdf") => Request::OfficePdf {
+            id: field_usize(line, "id").unwrap_or(0),
             path: field_str(line, "path").unwrap_or_default(),
         },
         Some("peek") => Request::Peek {
@@ -280,13 +294,16 @@ pub fn parse_request(line: &str) -> Request {
             path: field_str(line, "path").unwrap_or_default(),
             id: field_usize(line, "id").unwrap_or(0),
         },
+        Some("code") => Request::Code(super::codereq::Ask::parse(line)),
+        Some("html") => Request::Html(super::htmlreq::Ask::parse(line)),
+        Some("compare") => Request::Compare(super::compare::Ask::parse(line)),
         Some("settags") => Request::SetTags {
             rows: field_usize_array(line, "rows"),
             op: field_str(line, "op").unwrap_or_default(),
             tag: field_str(line, "tag").unwrap_or_default(),
         },
         Some("tagstates") => Request::TagStates { rows: field_usize_array(line, "rows"), id: field_usize(line, "id").unwrap_or(0) },
-        Some("devs") => Request::Devs { paths: field_str_array(line, "paths") },
+        Some("devs") => Request::Devs { paths: field_str_array(line, "paths"), id: field_usize(line, "id").unwrap_or(0) },
         Some("jump") => Request::Jump { id: field_usize(line, "id").unwrap_or(0), ranking: field_usize(line, "ranking").unwrap_or(0), favourites: field_str_array(line, "favourites"), recent: field_str_array(line, "recent") },
         Some("clipSet") => Request::ClipSet {
             op: field_str(line, "op").unwrap_or_default(),

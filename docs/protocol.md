@@ -120,8 +120,10 @@ or replacement of the pending request, and fetch metadata only for the visible w
 
 `{"c":"menuaction","op":"activate","id":4,"action":"duplicate"}` revalidates the
 selection captured by `snapshot` before the GUI dispatches a selected-item menu action.
-The response echoes `id`, `op`, and `action`, with `ok` and `error`. Only clipboard, Copy Path,
-and compression actions return captured `paths`; other actions do not serialize unused paths.
+The response echoes `id`, `op`, and `action`, with `ok` and `error`. Captured selection `paths`
+are returned for `validate`, and for `activate` when the action needs resolved paths for client-side
+dispatch; other activations return an empty array. `taildrop:*` and `sharelink` return the captured
+cursor path instead.
 The client also rechecks its listing identity and current action eligibility before dispatch.
 
 An optional `menuId` on `transfer`, `trash`, `duplicate`, `rename`, `archive`, or `convert`
@@ -133,7 +135,9 @@ batch handoff. These checks do not make subsequent external-helper filesystem op
 atomic. Omitting `menuId` preserves the existing keyboard and protocol entry paths.
 
 `{"c":"menuaction","op":"snapshot","id":4,"rows":[0,2]}` captures the selected identities
-from the active listing. `prepareDelete` with that `id` reviews the captured trees and returns a
+from the active listing and returns `count` and `kinds`, an array of each captured item's own file
+type bits in request order, including symlinks without following them. `prepareDelete` with that
+`id` reviews the captured trees and returns a
 fresh `token`, selected `count`, and total `bytes`. `checkDelete` with the `id` and `token` returns
 `valid` without mutating files. A changed set requires `refreshDelete`: it reviews only the same
 captured paths, drops missing paths, captures replacement identities, and issues a fresh token.
@@ -1229,6 +1233,88 @@ on a thread, because an open on a hung mount never returns and the loop waits on
 keeps the newest `id` and drops any line naming an older one. A path that is not a regular file,
 or that cannot be read, answers `hasShebang` false rather than an error, so the row stays absent.
 
+### code
+
+`{"c":"code","token":<uint>,"slot":"<string>","path":"<string>"|"text":"<string>","name":"<string>","lang":"<string>","first":<uint>,"count":<uint>,"raw":<bool>,"csv":"<delimiter>","record":<uint>}`
+
+Example: `{"c":"code","token":4,"slot":"look","path":"/home/gm/a.rs","first":40,"count":20}` and
+`{"c":"code","token":5,"slot":"fence:2","text":"fn main() {}","name":"x.rs","lang":"","first":1,"count":10}`
+
+The syntax-coloured lines `first` to `first + count - 1` of **one file or one text a client
+actually asked for**, never a sweep. A request holding `text` sends the bytes the client already
+holds, with `name` picking the language when `lang` is empty (a Markdown info string names it in
+its first word); without `text` the backend opens `path`, which a client never sends for a file on
+a network or phone mount. `first` counts from 1 and `count` is capped at 400 lines (the line cap,
+`lineCap` in `ui/CodeLines.qml`, which asks a longer window in parts), absent meaning the cap. `raw` true skips the colouring and answers the lines plain. Answers one `code` line on a
+thread. A newer request on the same `slot` ends the older job and the older reply is never sent,
+so a client matches the `token` of what it last sent and drops any other. At most 1,048,576 bytes
+of a file are ever read, and `bat` runs in the same read-only jail as the other helpers, on the
+bytes the verdict was made on.
+
+A raw table request may carry `csv`: `","` for CSV or `"\t"` for TSV. The backend scans
+the already loaded bytes as RFC 4180 records, with quotes opening only at a field start,
+`""` escaping a quote inside quotes and quotes in unquoted fields staying literal. It moves
+`first` back to the start of the record containing the asked first line, and extends the
+asked end through its record's last line, or EOF for an unterminated quote. Thus the reply
+contains whole records and can exceed the 400-line request cap, bounded by the 1 MiB size
+gate. No second file read or additional stat is made. An absent or invalid `csv`, or one
+without `raw: true`, keeps the ordinary line window.
+
+A raw `csv` ask may also carry `record`, a 1-based record ordinal with the header at 1,
+instead of locating its window by the physical `first` line. The backend locates that
+record in the same scan and asks `count` physical lines from its start, extending the
+end through the last record as above. This lets a table jump directly by delegate index
+without fetching a prefix or receiving a file-wide index. `record` is ignored without a
+valid raw `csv` delimiter; zero is clamped to 1. A record beyond EOF returns no lines.
+
+### html
+
+`{"c":"html","token":<uint>,"slot":"<string>","path":"<absolute path>","width":<uint>,"height":<uint>,"cancel":<bool>}`
+
+Example: `{"c":"html","token":3,"slot":"look","path":"/home/gm/index.html","width":984,"height":625}`.
+
+Renders the single page a client is previewing, never a listing. Width is the frame's device
+width, clamped to 1 through 4096 pixels. Optional height is the viewport's height at that width;
+when width is clamped, height scales with it, rounded up and bounded to 1 through 8000 pixels.
+An omitted height retains the column helper's 600-pixel viewport. The page must be a readable regular file at most
+1,048,576 bytes. A newer request in the same slot cancels the older helper and suppresses its
+reply. `cancel:true` ends that slot without opening a page. HTML and code slots are independent.
+
+The qml6 helper runs offscreen in its own bwrap namespace with network unshared, a 30-second
+CPU limit, and a 15-second wall deadline. Chromium needs large virtual reservations, so this
+helper has no address-space limit. Its profile is off the record, JavaScript is disabled, and
+navigation to another page is refused. Only the page folder is bound as /page, read-only; a
+content security policy restricts subresources to that folder and embedded data images/fonts.
+The one writable bind is a private helper directory under the thumbnail cache. All helper
+files are created exclusively. The confined input is bound over the page's own filename and
+loaded from that URL, preserving relative URLs and the document's own base element.
+The PNG is at least the requested viewport height and at most 8000 pixels tall, and cached by canonical
+path, size, nanosecond mtime, inode, device, width and viewport height. A hit also requires every
+engine-recorded local resource to retain its size, nanosecond mtime, inode and device. Records
+hold at most 256 local resources and 64 KiB; an unreadable or incomplete record forces another render.
+The companion cache uses the preview-cache bounds
+of 4096 files and 512 MiB, with a 60-second reader grace and one scan per 32 publications.
+
+### compare
+
+`{"c":"compare","token":<uint>,"a":"<string>","b":"<string>"}`
+
+Example: `{"c":"compare","token":3,"a":"/home/gm/notes-a.md","b":"/home/gm/notes-b.md"}`
+
+The unified diff of two regular files a client actually named, never a sweep; `a` is the first of the
+pair in the listing's order and `b` the second. Absolute paths and readable regular files are checked
+first; a refusal answers `failed`. Either file over 1,048,576 bytes then answers `over`, judged on both
+files before reading their contents. The bounded contents of each file are read in pair order: a read
+failure answers `failed`, growth past the limit answers `over`, a NUL byte in its first 8,192 bytes
+answers `binary`, and invalid UTF-8 anywhere answers `failed`. Code preview displays invalid UTF-8
+lossily, but a copied patch must preserve bytes, so Compare refuses it.
+Otherwise `/usr/bin/diff -u --label <a> --label <b> -- <a> <b>` runs once in the same read-only jail as
+the other helpers, with the two files bound read-only and nothing writable, so the patch names the real
+paths. The diff has a 2 s deadline; expiry kills its process tree and answers `failed`. Invalid UTF-8
+in the diff output also answers `failed`, so the clipboard never receives replacement bytes.
+Answers one `compare` line on a thread, and `token` echoes the request's so a client matches the
+one it last sent and drops any other.
+
 ### pdfcopy
 
 `{"c":"pdfcopy","id":<uint>,"slot":"<string>","path":"<string>"}`
@@ -1244,6 +1330,29 @@ so two viewers never share one; `slot` names the viewer, so a newer fetch supers
 viewer's copy.
 The copy runs beside the loop, so a dead mount costs the viewer a sentence and
 never the window; a stale reply is dropped by its `id`, the way a superseded listing's result is.
+
+### officepdf
+
+`{"c":"officepdf","id":<uint>,"path":"<string>"}`
+
+Example: `{"c":"officepdf","id":4,"path":"/home/gm/Documents/report.docx"}`
+
+Converts one DOCX, ODT, XLSX, ODS, PPTX or RTF file to a cached PDF with LibreOffice and answers
+`officepdf` lines carrying the request `id`: `{"t":"officepdf","id":4,"state":"ready","path":"<cached pdf>"}`
+when the PDF exists, `{"t":"officepdf","id":4,"state":"converting"}` when a conversion started, and
+`{"t":"officepdf","id":4,"state":"failed","err":"<string>"}` when it cannot be had. A `converting`
+line is always followed by one `ready` or `failed` line for the same `id` once the job ends, so
+a client waits for that second line and treats `converting` as progress only. A request that
+needs no conversion answers `ready` or `failed` at once and sends no follow-up.
+`unavailable` rides on a `failed` line only when this file or this box will never convert:
+`{"t":"officepdf","id":4,"state":"failed","err":"LibreOffice is not installed on this box.","unavailable":true}`.
+A client that reads it keeps its existing preview and does not ask again; a `failed` line without
+it (a converter error, a timeout, a request replaced by a newer one, a mount that is not
+responding) may succeed on a later request, except that a converter error (an exit status or no
+PDF) is remembered for that file until its modification time changes; a timeout is not.
+The path is resolved and its cache entry looked up beside the loop under the mount deadline, so a
+hung mount costs one `failed` line and never the window. One conversion runs at a time and the
+newest request replaces the one queued behind it, whichever request finished its lookup first; a request older than the newest one started, running or already finished, is answered replaced at once and never converts.
 
 ### settags
 
@@ -1360,7 +1469,7 @@ check merely slow inside its budget is run again rather than skipped.
 
 ### devs
 
-`{"c":"devs","paths":[<string>,...]}`
+`{"c":"devs","paths":[<string>,...],"id":<uint optional>}`
 
 Example: `{"c":"devs","paths":["/","/home/gm","/home/gm/Documents"]}`
 
@@ -1373,6 +1482,7 @@ whose peeked rows carry no device, and keeps the answers by path. Answers one `d
 own, because a stat on a mount that stopped answering never returns and the loop waits on nothing. A path on a
 network or FUSE mount runs under the same 5 s bound a listing has, then the mount is marked stuck for 30 s and
 answers 0 at once, so a dead share costs one thread and one wait, never one per ask. An absent `paths` asks nothing.
+Rail hover requests include a positive `id`, echoed in the answer, so leaving or changing a row discards its late answer.
 
 ### clipSet
 
@@ -1513,7 +1623,7 @@ A first listing and a navigation carry no `changed`, and a client reads a missin
 
 ### rows
 
-`{"t":"rows","start":<uint>,"rows":[{"n":<string>,"d":<bool>,"s":<uint>,"m":<int>,"p":<uint>,"i":<string>,"t":<bool>,"k":<uint>[,"l":<string>][,"v":<uint>][,"tg":[<string>,...]]},...],"kinds":[<string>,...],"ms":<float>,"listing":<uint>}`
+`{"t":"rows","start":<uint>,"rows":[{"n":<string>,"d":<bool>,"s":<uint>,"m":<int>,"p":<uint>,"i":<string>,"t":<bool>,"k":<uint>[,"l":<string>][,"v":<uint>][,"tg":[<string>,...]][,"a":true][,"x":false]},...],"kinds":[<string>,...],"ms":<float>,"listing":<uint>}`
 
 Example:
 `{"t":"rows","start":0,"rows":[{"n":"say \"hi\".txt","d":false,"s":12,"m":1787790423,"p":33188,"i":"text-x-generic","t":false,"k":0},{"n":"photos","d":true,"s":4096,"m":1787790424,"p":16877,"i":"folder","t":false,"k":1,"v":56}],"kinds":["Plain text document","Folder"],"ms":1.250,"listing":1}`
@@ -1531,6 +1641,11 @@ mtime as a unix timestamp (`m`), a raw `st_mode` (`p`), a freedesktop icon name
 (`i`), a thumbnailable flag (`t`), and a Kind index (`k`, into the envelope's own
 `kinds` array).
 
+**`x:false` means the reported execute bits do not establish per-file executable status.** Only those
+rows carry it; ordinary rows gain no wire bytes. The icon and executable name colour use
+the same backend decision, while `p` stays the reported mode for permission display and
+operations. A symlink's name still uses symlink colour, and a lifted name uses foreground.
+
 **`l` is where a symlink points, and only a symlink row carries it.** It is the link's own bytes,
 verbatim and unresolved, so a relative target stays relative and a broken link still names where it
 points; a `readlink` that fails leaves the field off entirely, the same as any other row. The row it
@@ -1547,6 +1662,10 @@ row draws its swatches with no call per row; an untagged row carries no `tg` at 
 foreign word stays untouched and shows in Properties instead. One `getxattr` per emitted row
 reads it, which is exactly the rows a window stats and never a sweep; on a network or phone
 mount no row carries it, because each read there would be a round trip.
+
+**`a` marks a thumbnailable AppImage, and only that row carries it.** Its own icon is its identity, so
+the Images thumbnail mode draws it while a row with any other executable icon, such as a Windows
+installer a third-party thumbnailer handles, stays a mark; every other row carries no `a` at all.
 
 **`v` is the row's filesystem id, and only a directory row carries it.** A drop destination is
 always a directory, so a file row's device would never be read, and the scale fixture is 100,000
@@ -1768,13 +1887,15 @@ existing `archivedone` terminal line remains unchanged for archive clients.
 
 ### meta
 
-`{"t":"meta","row":<uint>,"w":<uint>,"h":<uint>,"orient":<uint>,"ms":<uint>,"rate":<uint>,"entries":<uint>,"unpacked":<uint>,"afailed":<bool>,"names":[{"n":"<string>","d":<bool>},...],"lines":<uint>,"partial":<bool>,"lfailed":<bool>,"target":"<string>","targetdir":<bool>,"owner":"<string>"}`
+`{"t":"meta","row":<uint>,"w":<uint>,"h":<uint>,"orient":<uint>,"ms":<uint>,"rate":<uint>,"entries":<uint>,"unpacked":<uint>,"afailed":<bool>,"names":[{"n":"<string>","d":<bool>},...],"lines":<uint>,"partial":<bool>,"lfailed":<bool>,"frames":<uint>,"photo":<object|null>,"target":"<string>","targetdir":<bool>,"raw":{"file":"<string>","w":<uint>,"h":<uint>,"orient":<uint>}|null,"owner":"<string>"}`
 
-Example: `{"t":"meta","row":4,"w":0,"h":0,"orient":1,"ms":0,"rate":0,"entries":214,"unpacked":3400,"afailed":false,"names":[{"n":"ui","d":true}],"lines":0,"partial":false,"lfailed":false,"target":"","targetdir":false,"owner":"gm"}`
+Example: `{"t":"meta","row":4,"w":0,"h":0,"orient":1,"ms":0,"rate":0,"entries":214,"unpacked":3400,"afailed":false,"names":[{"n":"ui","d":true}],"lines":0,"partial":false,"lfailed":false,"frames":0,"photo":null,"target":"","targetdir":false,"raw":null,"owner":"gm"}`
 
 Every field a row did not ask for is zero, false or empty. `w` and `h` are pixels, read from the
 file's own header, as stored and before any turn. `ms` and `rate` come from the probe. `lines` is a
 newline count with `partial` true when it stopped at its 1 MiB budget, so the column states it as a floor.
+
+`photo` is the camera file's EXIF facts as stored, from the same RAW walk and in the same reply: `{"make":"Canon","model":"Canon EOS R6","lens":"RF35mm F1.8 MACRO IS STM","exp":[1,250],"fnum":[28,10],"iso":400,"focal":[35,1],"taken":"2026:09:12 18:31:00","w":6000,"h":4000}`, where `exp`, `fnum` and `focal` are numerator and denominator pairs, `w` and `h` are the sensor size from the EXIF pixel dimensions (sent together or not at all) and an absent fact is left out. It is `null` for every row that is not a RAW and for a RAW whose walk names none of them; a JPEG's facts are never in this reply. The `properties` reply of `menuaction` carries the same `photo` object, and for a `.jpg` or `.jpeg` it is read from the first `Exif` APP1 within the file's first 64 KiB.
 
 `orient` is the EXIF orientation, 1 to 8, from the same read of the same open. The walk that finds a
 JPEG's frame header reads the head of its first `Exif` APP1 on the way past. It is 1 for every file that
@@ -1810,6 +1931,19 @@ total. That is a different answer from an archive holding nothing, which sends t
 `target` is a symlink's own target and `targetdir` says whether that target is a directory, so the
 column's mark can follow the target the way a listing row's does.
 
+`raw` is an object for a camera RAW whose largest embedded JPEG preview was copied out, and `null` for every
+other file and for a RAW holding none. `file` is the copy under `$XDG_CACHE_HOME/flea/raw/`, named by the md5
+of the RAW's file URI and carrying the RAW's mtime, so a changed RAW is copied again and an unchanged one is
+neither walked nor written twice.
+The directory is held to 4096 copies and 512 MiB, least recently used first (by ctime, since a copy's mtime is its RAW's:
+a cache hit sets the copy's atime to now, which moves the ctime), and sweeps temps a minute old. A copy made or served less
+than a minute ago is never evicted, because the thread that has it is still reading it. Each process scans on its own first
+new copy and then on one in 32 of its own, and the directory is shared, so it can stand over its caps: by the copies of the
+last minute, which stay until the first scan after they age, and by fewer than 32 more per process. `w`, `h` and `orient` read like
+the top-level fields, taken from the copy: stored
+pixels and the EXIF turn, which the copy carries even when the camera put it only in the RAW's IFD0. The top-level
+`w` and `h` stay 0 for a RAW, because they name the file's own pixels and the preview is smaller.
+
 `owner` is the login name of the user who owns the path itself (a symlink reports the link's owner, as
 its row does), resolved from `/etc/passwd` alone and never through `getpwuid`: that call goes through
 NSS and can wait on a network directory, and the meta thread must never hang the column on one. A uid
@@ -1826,6 +1960,60 @@ path opened as a regular file and its first two bytes were `#!`; anything else, 
 FIFO, a missing path or an unreadable file, answers false. The open is the backend's own
 regular-file open, so a FIFO is refused before any open and a row swapped for one inside that
 window is closed again, the same rule `meta` follows.
+
+### code
+
+`{"t":"code","token":<uint>,"slot":"<string>","state":"<string>","first":<uint>,"total":<uint>,"lines":[[<role>,"<string>",...],...][,"records":<uint>,"firstRecord":<uint>]}`
+
+Example: `{"t":"code","token":4,"slot":"look","state":"styled","first":1,"total":2,"lines":[[5,"fn",0," main"],[]]}`
+
+The answer to one `code` request, echoing its `token` and `slot`. `first` is the actual first
+line returned: normally the asked line, or the record start for a raw `csv` table request.
+`state` is `styled`
+(`bat` coloured the lines), `plain` (the lines are the file's own text, every role 0: a line over
+5,000 bytes, or no `bat` on the host), `binary` (a NUL in the first 1,024 bytes), `large` (over
+1,048,576 bytes) or `failed` (unreadable, or `bat` refused it); the last three carry no lines.
+`total` is the line count of the whole text. Each entry of `lines` is one line as a flat run list,
+a role from 0 to 6 then the run's text, in order, an empty line being an empty list; the lines
+returned are those asked for that exist, extended to whole records for a raw `csv` table
+request. `total` remains the physical-line count in either case. A plain raw `csv` reply
+also carries `records`, the whole file's record count including its header, and `firstRecord`,
+the ordinal of the first returned record. An unterminated quote at EOF still counts as one
+record. An empty file has zero records; an empty reply beyond EOF has the requested record
+ordinal, or the next ordinal after the file for a physical-line ask. Every other reader's
+reply omits these two fields. The roles are the foreground (0) and bat's ANSI colours
+31 to 36 in order: red, green, yellow, blue, magenta, cyan. A one-line `.json` file is formatted
+with `jq` first, so its `total` and lines are those of the formatted text.
+
+### html
+
+`{"t":"html","token":<uint>,"slot":"<string>","state":"<string>","file":"<PNG path>","total":<uint>,"width":<uint>,"title":"<string>"}`
+
+Example: `{"t":"html","token":3,"slot":"look","state":"ready","file":"/cache/thumbnails/flea-html/a.png","total":61,"width":984,"title":"Local page"}`.
+
+The answer to the latest request in one HTML slot. State is `ready`, `failed`, or `cancelled`;
+only `ready` names a PNG and a whole-file line count. Failure uses the existing unreadable-file
+frame. Width is the render width, not a CSS zoom. Title is the helper's observed static page
+title on a new render and empty on a cache hit. The client matches token and slot, and drops
+replies after closing or switching to Source.
+
+### compare
+
+`{"t":"compare","token":<uint>,"state":"<string>","patch":"<string>"}`
+
+Example: `{"t":"compare","token":3,"state":"diff","patch":"--- /a\n+++ /b\n@@ -1 +1 @@\n-x\n+y\n"}`
+
+The answer to one `compare` request, echoing its `token`. `state` is `diff` (`diff` exited 1 and `patch`
+holds what it printed, headers included), `identical` (it exited 0), `binary` (screening found a NUL in
+a file's first 8,192 bytes), `over` (either file is over 1,048,576 bytes) or `failed` (a path
+that cannot be read as a regular file, invalid UTF-8 in a file or the patch, any other exit, `diff` or
+the jail not starting, or a patch past 8 MiB). `patch` is the empty string in every state but `diff`.
+
+Screening first requires both absolute paths to open as regular files with readable lengths;
+either initial length over 1,048,576 bytes returns `over`. It then reads `a`, followed by `b`, up to
+1,048,577 bytes each, checking read failure (`failed`), growth past the limit (`over`), a NUL in the
+first 8,192 bytes (`binary`), then UTF-8 validity (`failed`), stopping at the first refusal. An earlier
+file's `failed` or `over` therefore takes precedence over a later file's NUL.
 
 ### collisions
 
@@ -2098,7 +2286,7 @@ the whole answer's time, zoxide and the existence checks together.
 
 ### devs
 
-`{"t":"devs","devs":{<string>:<uint>,...}}`
+`{"t":"devs","devs":{<string>:<uint>,...},"id":<uint optional>}`
 
 Example: `{"t":"devs","devs":{"/":66305,"/home":66306,"/home/gm/gone":0}}`
 
@@ -2106,8 +2294,8 @@ The answer to one `devs`: each asked path once, in the order asked, with its dev
 be read, a missing one, an empty one, a relative one (it would name the backend's own directory, which the client
 never means) and one on a mount that is not answering all answer 0, and the client reads 0 as unknown and copies:
 copying where a move was possible is an annoyance, and moving across volumes loses the original. The line carries
-no request id, because each answer names its own paths and stays true on its own; a late answer for a folder the
-client has left only fills facts about paths that are still what they were.
+the request's positive `id` when supplied; the rail accepts only the current hover's id and path. Untagged answers
+continue to fill the breadcrumb and column device map, while tagged hover answers never enter that cache.
 
 ### changed
 

@@ -3,6 +3,7 @@ import Quickshell.Io
 import qs.Commons
 import "js/Tabs.js" as Tabs
 import "js/Search.js" as Search
+// ControlReader.js loads with IpcControls.qml on the first cohesionControls call, never with the first frame.
 
 // The seam the tests drive, see AGENTS.md "Testing". Read-only: it reports, never acts.
 QtObject {
@@ -83,9 +84,9 @@ QtObject {
         function themeLoaded(): bool { return Theme.ready }
         // Sample output: 1100 800; the content the dialogs centre in, which ui-permissions.sh waits to equal hyprctl's size.
         function windowSize(): string { var c = root.fleaWindow.contentItem; return Math.round(c.width) + " " + Math.round(c.height) }
-        function themeForeground(): string { return String(Theme.color.foreground) }
+        function themeForeground(): string { return String(Theme.color.opaquePalette.foreground) }
         // Sample output: {"clear":true,"alpha":0.3411764705882353,"window":"#00000000","early":true}; tests/glass-boot.sh reads the window the entry made.
-        function glass(): string { return JSON.stringify({ clear: Glass.clear, alpha: Glass.alpha, window: String(root.fleaWindow.color), early: root.fleaWindow.clearedEarly }) }
+        function glass(): string { return JSON.stringify({ clear: Glass.clear, mode: Glass.mode, focused: Glass.focused, automatic: Glass.usesDefault, alpha: Glass.alpha, listAlpha: Glass.listAlpha, foreground: String(Theme.color.foreground), muted: String(Theme.color.muted), metadata: String(Theme.color.metadata), window: String(root.fleaWindow.color), early: root.fleaWindow.clearedEarly }) }
         function selectedFill(): string { return String(Style.selectedFill) }
         function palette(): string {
             var c = Theme.color;
@@ -483,6 +484,8 @@ QtObject {
         function columnMarkdownView(): string { return root.previewReaders.columnMarkdownView() }
         function previewKind(): string { return root.previewReaders.previewKind() }
         function previewState(): string { return root.previewReaders.previewState() }
+        function compareState(): string { return root.previewReaders.compareState() }
+        function previewTextState(column: bool): string { return root.previewReaders.previewTextState(column) }
         function previewFigures(): string { return root.previewReaders.previewFigures() }
         function previewBlockKinds(column: bool): string { return root.previewReaders.previewBlockKinds(column) }
         function previewPosition(): int { return root.previewReaders.previewPosition() }
@@ -598,6 +601,7 @@ QtObject {
         function columnFrameReady(): bool { return root.columns ? root.columns.frameReady() : false }
         function columnTextLines(): string { return root.columns ? root.columns.textLines() : "" }
         function columnMarkdownText(): string { return root.columns ? root.columns.markdownText() : "" }
+        function htmlState(column: bool): string { return root.previewReaders.htmlState(column) }
         function columnLinesRect(): string { return root.columns ? root.fleaWindow.rectOf(root.columns.linesItem()) : "" }
         function columnArchiveRect(): string { return root.columns ? root.fleaWindow.rectOf(root.columns.archiveItem()) : "" }
         function previewSurfaceRect(): string { return root.previewReaders.previewSurfaceRect() }
@@ -784,10 +788,6 @@ QtObject {
         function columnPdfPage(): int { return root.columns ? root.columns.pdfPage() : -1 }
         function columnPdfPages(): int { return root.columns ? root.columns.pdfPages() : -1 }
         function columnPdfLoaded(): bool { return root.columns ? root.columns.pdfLoaded() : false }
-        function columnChevronCentre(dir: string): string {
-            var item = root.columns ? root.columns.pdfChevron(dir) : null
-            return item && item.visible ? root.fleaWindow.centreOf(item) : ""
-        }
         function chromeHeight(): int { return Math.round(Theme.chromeHeight) }
         function tabCount(): int { return Tabs.count(root.pane) }
         function tabIndex(): int { return Tabs.currentIndex(root.pane) }
@@ -876,6 +876,12 @@ QtObject {
             }
             return JSON.stringify({inside: inside, busy: !!dialog && dialog.busy,
                 activeItem: item ? String(item) : "", field: dialog ? dialog.formFocus() : ""})
+        }
+        // The cohesion captures' reader over the window, see ui/IpcControls.qml and ui/js/ControlReader.js.
+        function cohesionControls(): string {
+            var window = root.pane.Window.window
+            var kinds = /^(DialogButton|ChromeButton|CheckBox|DialogField|ProtocolChip|Crumb|MenuRow|SidebarRow|SettingsSegment|SettingsRow|TabBar|PathEntry|RenameField)_QML/
+            return Qt.createComponent("IpcControls.qml").createObject(null).read(window, window ? window.contentItem : null, kinds, {})
         }
         function networkHostPortWidths(): string { return root.networkDialog ? root.networkDialog.formHostPortWidths() : "" }
         // Mask state and presence only: the seam never returns password content.

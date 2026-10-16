@@ -51,7 +51,7 @@ check "a read exits 0" "0" "$rc"
 check "a read answers the shipped view" "1" "$(echo "$out" | grep -c '"view": "list"')"
 check "a read answers the shipped menu.hidden" "1" "$(echo "$out" | grep -c '"copyAs"')"
 check "a read ships Open folders while dragging off" "1" "$(echo "$out" | grep -c '"openFoldersWhileDragging": false')"
-check "a read answers every top-level key" "39" "$(echo "$out" | grep -c '^  "')"
+check "a read answers every top-level key" "41" "$(echo "$out" | grep -c '^  "')"
 check "a read leaves no state file behind" "0" "$([ -e "$UI" ] && echo 1 || echo 0)"
 
 # The window paints a first launch before any file exists, so the two fallbacks it holds have to be
@@ -99,7 +99,7 @@ check "a patch writes the file" "1" "$([ -f "$UI" ] && echo 1 || echo 0)"
 # 240 is not a stop, so src/uistate.rs Rule::SidebarWidth snaps it down to 224: this asserted the
 # raw number and had been failing since the snap was written, which is why it pins the snap now.
 check "the stored file carries the patched width, snapped to a stop" "1" "$(grep -c '"sidebarWidth": 224' "$UI")"
-check "the stored file keeps every other key" "39" "$(grep -c '^  "' "$UI")"
+check "the stored file keeps every other key" "41" "$(grep -c '^  "' "$UI")"
 check "the state file is owner only" "600" "$(stat -c '%a' "$UI")"
 check "the state directory is owner only" "700" "$(stat -c '%a' "$STATE/flea")"
 # ls -A: ui.json and its lock, and no temp file left behind by the rename.
@@ -219,19 +219,21 @@ out=$(flea_ui '{"preview":{"thumbSize":"huge"}}' 2>&1); rc=$?
 check "a huge thumbnail patch exits 0" "0" "$rc"
 out=$(flea_ui '{"preview":{"thumbSize":"largest"}}' 2>&1); rc=$?
 check "a largest thumbnail patch exits 0" "0" "$rc"
-# The Markdown view is not a stored choice (decided 2026-10-03): a fresh read holds no leaf and a patch for it is refused.
+# Document views are not stored choices: a fresh read holds neither leaf and patches are refused.
 fresh
 out=$(flea_ui 2>&1)
-check "a fresh read holds no markdownView" "0" "$(echo "$out" | grep -c 'markdownView')"
-for view in source rendered html; do
-  out=$(flea_ui "{\"preview\":{\"markdownView\":\"$view\"}}" 2>&1); rc=$?
-  check "a $view markdown patch exits 2" "2" "$rc"
-  check "and names the key it refused: markdownView ($view)" "1" "$(echo "$out" | grep -c "markdownView")"
-  check "and writes no state file: markdownView ($view)" "0" "$([ -e "$UI" ] && echo 1 || echo 0)"
+for leaf in markdownView htmlView; do
+  check "a fresh read holds no $leaf" "0" "$(echo "$out" | grep -c "$leaf")"
+  for view in source rendered html; do
+    reply=$(flea_ui "{\"preview\":{\"$leaf\":\"$view\"}}" 2>&1); rc=$?
+    check "a $view $leaf patch exits 2" "2" "$rc"
+    check "and names the key it refused: $leaf ($view)" "1" "$(echo "$reply" | grep -c "$leaf")"
+    check "and writes no state file: $leaf ($view)" "0" "$([ -e "$UI" ] && echo 1 || echo 0)"
+  done
 done
 # A state file that still carries the leaf loads, and its other keys stand: the key is an unknown one, kept as read.
 mkdir -p "$STATE/flea"
-printf '{"preview":{"markdownView":"source","thumbSize":"large"},"view":"columns"}\n' > "$UI"
+printf '{"preview":{"markdownView":"source","htmlView":"source","thumbSize":"large"},"view":"columns"}\n' > "$UI"
 out=$(flea_ui 2>&1); rc=$?
 check "a state file holding the retired leaf reads exit 0" "0" "$rc"
 check "and prints no error" "0" "$(echo "$out" | grep -ci 'error\|refus')"
@@ -241,9 +243,9 @@ out=$(flea_ui '{"density":"tight"}' 2>&1); rc=$?
 check "a write over the retired leaf exits 0" "0" "$rc"
 check "and lands" "1" "$(grep -c '"density": "tight"' "$UI")"
 # The write fills the preview defaults in, so the unknown key and its sibling leaf are read back by value, not by shape.
-# Sample input: {"density": "tight", "preview": {"markdownView": "source", "thumbSize": "large", "column": true}, "view": "columns"}
-kept=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d.get("preview", {}); print(p.get("markdownView"), p.get("thumbSize"), d.get("view"))' "$UI" 2>&1)
-check "and the write keeps the retired leaf, its sibling leaf and the view as read" "source large columns" "$kept"
+# Sample input (post-write fields, other defaults omitted): {"density": "tight", "view": "columns", "preview": {"column": true, "thumbSize": "large", "markdownView": "source", "htmlView": "source"}}
+kept=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); p=d.get("preview", {}); print(p.get("markdownView"), p.get("htmlView"), p.get("thumbSize"), d.get("view"))' "$UI" 2>&1)
+check "and the write keeps both retired leaves, their sibling leaf and the view as read" "source source large columns" "$kept"
 
 # G1: two folder patches both survive, a null forgets one, and two widths behave per key.
 fresh
@@ -397,7 +399,7 @@ check "and the read still answers the full default shape" "1" "$(flea_ui 2>&1 | 
 out=$(flea_ui '{"hidden":true}' 2>&1); rc=$?
 check "a patch onto that same file exits 0" "0" "$rc"
 check "and does not leave the operator's bytes" "1" "$([ "$(sha256sum "$UI" | cut -d' ' -f1)" != "$broken_sha" ] && echo 1 || echo 0)"
-check "it writes the full default document instead" "39" "$(grep -c '^  "' "$UI")"
+check "it writes the full default document instead" "41" "$(grep -c '^  "' "$UI")"
 check "so the hand-written key is gone" "1" "$(grep -c '"density": "compact"' "$UI")"
 check "and the patch itself landed" "1" "$(grep -c '"hidden": true' "$UI")"
 

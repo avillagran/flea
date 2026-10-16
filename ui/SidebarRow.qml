@@ -11,10 +11,13 @@ Item {
 
     required property int index
     required property var modelData
-    // The place the pane stands in: the fill and the accent edge. The keyboard cursor is a separate frame and moves on its own.
+    // Current-place identity stays separate from the keyboard's visual highlight, including over IPC.
     property bool lit: false
+    property bool highlighted: root.lit
     property bool cursor: false
     property bool focused: false
+    // A drop cue replaces the trailing detail and reserves its caption's width.
+    property Item trailingLabel: null
     // The keyboard is on this row's eject mark, which then draws its own frame in the foreground at its hit box.
     property bool markFocused: false
     // Network only, driven from ui/Sidebar.qml's renamingIndex; swaps the label for the editor.
@@ -76,7 +79,7 @@ Item {
     // The rail rounds nothing: a lit place is the list row's square full-bleed fill, see ui/Row.qml.
     Rectangle {
         anchors.fill: parent
-        color: root.lit
+        color: root.highlighted
             ? (root.modelData.kind === "trash" ? Style.selectedAccentFill : root.focused ? Style.selectedFill : Style.normalFill)
             : "transparent"
     }
@@ -89,18 +92,8 @@ Item {
         opacity: Theme.washHover
     }
 
-    // The keyboard cursor's own frame: foreground, a hairline inside the row, clear of the rail's edge rule on its right.
     Rectangle {
-        visible: root.cursor
-        width: parent.width - Theme.spacing.hairline - Theme.chromeControlInset
-        height: parent.height
-        color: "transparent"
-        border.width: Theme.spacing.hairline
-        border.color: Theme.color.foreground
-    }
-
-    Rectangle {
-        visible: root.lit
+        visible: root.highlighted
         width: Theme.spacing.hairline * 2
         height: parent.height
         color: Theme.color.accent
@@ -126,7 +119,7 @@ Item {
         id: glyphMark
         Glyph {
             name: root.modelData.glyph
-            color: root.lit && root.modelData.kind === "trash" ? Theme.color.accent : Theme.color.foreground
+            color: root.highlighted && root.modelData.kind === "trash" ? Theme.color.accent : Theme.color.foreground
         }
     }
 
@@ -145,8 +138,10 @@ Item {
         anchors.left: mark.right
         anchors.leftMargin: Style.spacing.rowGap
         // The label ends one gap before any trailing number, square or mark.
-        anchors.right: root.detail.length > 0 ? detailText.left : dot.left
-        anchors.rightMargin: root.keepsTrailingGap ? Style.spacing.rowGap : 0
+        anchors.right: root.trailingLabel ? parent.right : root.detail.length > 0 ? detailText.left : dot.left
+        anchors.rightMargin: root.trailingLabel ? Math.min(root.width - label.x,
+            Theme.spacing.rowPaddingX + root.trailingLabel.implicitWidth + Theme.spacing.gap)
+            : root.keepsTrailingGap ? Style.spacing.rowGap : 0
         anchors.verticalCenter: parent.verticalCenter
         text: root.modelData.label
         color: root.modelData.error ? Theme.color.error : Theme.color.foreground
@@ -154,6 +149,7 @@ Item {
         font.pixelSize: Theme.font.body
         // A label too long for the rail keeps its start and ends in an ellipsis.
         elide: Text.ElideRight
+        clip: root.trailingLabel !== null
         textFormat: Text.PlainText
     }
 
@@ -187,14 +183,15 @@ Item {
     readonly property Item markFrameItem: ejectLoader.item ? ejectLoader.item.frame : null
     // The rail's real trailing indicator slot, so ui/Ipc.qml measures this dot instead of recomputing it.
     readonly property Item indicatorSlot: dot
-    readonly property Item detailItem: detailText
+    readonly property Item detailItem: root.trailingLabel || detailText
     readonly property Item labelItem: label
-    readonly property bool indicatorVisible: root.showsDot
+    readonly property bool indicatorVisible: root.showsDot && root.trailingLabel === null
     // One gap before any trailing number, square or mark; detail covers the Trash count's zero-width dot.
     readonly property bool keepsTrailingGap: root.detail.length > 0 || dot.width > 0
 
     Text {
         id: detailText
+        visible: root.trailingLabel === null
         anchors.right: dot.left
         anchors.rightMargin: dot.width > 0 ? Style.spacing.rowGap : 0
         anchors.verticalCenter: parent.verticalCenter
@@ -211,6 +208,7 @@ Item {
     // NETWORK header's "+" share one centre line whatever their ink does: align by slot, never by ink.
     Item {
         id: dot
+        visible: root.trailingLabel === null
         anchors.right: parent.right
         anchors.rightMargin: Style.spacing.rowPaddingX
         anchors.verticalCenter: parent.verticalCenter

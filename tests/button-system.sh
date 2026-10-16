@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # The Trash strip's Empty Trash and a destructive DialogButton draw one ladder in five states, and every ui/ file declaring the Button role and drawing a border.width is the control, a ruled set member, or named here; offscreen, no display or lock.
 set -u
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
@@ -8,7 +9,7 @@ verdict=0
 fail() { printf 'FAIL %s\n' "$1"; verdict=1; }
 
 # The sweep table (ButtonSystem040 A, DESIGN-040 "buttons"): each file is the one control, a ruled set member, a mark, or deferred by name.
-control_files="ConvertDialog MenuActionDialog CollideConfirm TrashConfirm OpenWithDialog NetworkDialog PickerSave PermissionsDialog TransferCard TrashView ProtocolChip PickerChrome"
+control_files="ConvertDialog MenuActionDialog CollideConfirm TrashConfirm OpenWithDialog NetworkDialog PermissionsDialog TransferCard TrashView ProtocolChip PickerAnswers"
 for name in $control_files; do
     grep -q 'Flea\.DialogButton {' "ui/$name.qml" || fail "ui/$name.qml no longer instantiates the one control, Flea.DialogButton"
 done
@@ -29,8 +30,9 @@ grep -q 'readonly property color frame: root.focusShown && root.focusFrame === "
 ring_named=$(grep -rlE 'buttonRing|focusLine' ui --include='*.qml' --include='*.js' || true)
 [ -z "$ring_named" ] || fail "a ring item or focus line is still named in: $ring_named"
 grep -q 'setMember: true' ui/ProtocolChip.qml || fail 'ui/ProtocolChip.qml is no longer a set member of the one control'
-# The picker's answers are the one control and its marks are Tier A chrome marks; only the filter chips keep Framed.
-grep -q 'component Answer: Flea.DialogButton' ui/PickerChrome.qml || fail 'ui/PickerChrome.qml: the answers are no longer the one control'
+# The picker's answers are the one control and its marks are Tier A chrome marks.
+grep -q 'Flea.PickerAnswers {' ui/PickerWindow.qml || fail 'ui/PickerWindow.qml: the answers are not the shared strip'
+grep -q 'component Answer: Flea.DialogButton' ui/PickerAnswers.qml || fail 'ui/PickerAnswers.qml: the answers are no longer the one control'
 grep -q 'component Mark: Flea.ChromeButton' ui/PickerChrome.qml || fail 'ui/PickerChrome.qml: the marks are no longer chrome marks'
 # The QML handback test drives the ipc's own body: a focus scope forced alone returns to its last child, so the button is released first.
 grep -q 'view\.emptyItem\.focus = false; view\.forceActiveFocus()' ui/Ipc.qml || fail 'ui/Ipc.qml: trashFocusListing no longer releases the strip button before forcing the view'
@@ -45,12 +47,10 @@ while IFS= read -r open_tok; do
     esac
 done <<< "$open_seq"
 [ "$open_forces" -gt 0 ] && [ "$open_ok" -eq 1 ] || fail 'ui/TrashView.qml: open() forces the scope without releasing emptyAction first'
-# Deferred by name (AGENTS.md): PickerChrome.Framed, now the filter chips alone, waits for Picker040 (v0.3.10), and NetworkForm's TLS box has no board.
-grep -q 'component Framed: Item' ui/PickerChrome.qml || fail 'ui/PickerChrome.qml: Framed moved, update this table'
-# Completeness: a ui/ file declaring the Button accessible role and drawing a border.width (ChromeButton's is its keyboard frame, SidebarRow's the rail row's cursor, TabBar's the New tab mark's keyboard frame) is in this list or it is a new hand-built button.
-known="ChromeButton DialogButton DialogField MediaStrip PickerChrome SettingsPanel SettingsSegment SidebarRow TabBar"
+# Completeness: a ui/ file declaring the Button or ComboBox accessible role and drawing a border.width (ChromeButton's is its keyboard frame, SidebarRow's the eject mark's focus, TabBar's the New tab mark's keyboard frame, PickerFilter's the filter trigger's) is in this list or it is a new hand-built button.
+known="ChromeButton DialogButton DialogField MediaStrip PickerFilter SettingsPanel SettingsSegment SidebarRow TabBar"
 found=""
-for path in $(grep -rlE 'Accessible\.role[[:space:]]*:[[:space:]]*Accessible\.(Push)?Button' ui --include='*.qml'); do
+for path in $(grep -rlE 'Accessible\.role[[:space:]]*:[[:space:]]*Accessible\.((Push)?Button|ComboBox)' ui --include='*.qml'); do
     grep -q 'border\.width' "$path" && found="$found $(basename "$path" .qml)"
 done
 found=$(printf '%s\n' $found | sort | tr '\n' ' ')
@@ -85,16 +85,37 @@ chmod 700 "$test_root/runtime" || exit 1
 # The outer cap, passed to the harness as BUTTONSYS_TIMEOUT_S so its own cap, half of it, lands first.
 run_timeout_s=60
 # Each harness runs in its own config dir with the same pinned roots: "<qml file>:<report tag>:<checks a full green run makes>".
-harnesses="button-system.qml:BUTTONSYS:101 button-members.qml:MEMBERS:160 button-hueless.qml:HUELESS:20 button-keys.qml:KEYS:21 button-heldmask.qml:HELDMASK:4"
+harnesses="button-system.qml:BUTTONSYS:101 button-members.qml:MEMBERS:161 button-hueless.qml:HUELESS:20 button-keys.qml:KEYS:21 button-heldmask.qml:HELDMASK:4 button-press.qml:PRESSSNAP:102 button-press.qml:PRESS:102 button-press.qml:PRESSMUTANT:102"
 total=0
 verdict_output=""
 for spec in $harnesses; do
     qml=${spec%%:*}; rest=${spec#*:}; tag=${rest%%:*}; expected_checks=${rest#*:}
     config="$test_root/config-$tag"
     mkdir -p "$config" || exit 1
+    negative=0
     # The probe imports ui/ as Flea, and ui/'s qs.Commons resolves against this root, as it does from ui/boot.
-    ln -s "$PWD/ui" "$config/flea" || exit 1
-    ln -s "$(readlink -f ui/boot/Commons)" "$config/Commons" || exit 1
+    if [ "$tag" = PRESSMUTANT ] || [ "$tag" = PRESSSNAP ]; then
+        negative=1
+        [ "$tag" = PRESSSNAP ] && negative=2
+        tag=PRESS
+        cp -a ui "$config/flea" || exit 1
+        # Mutate only this run's marked copy, restoring root scaling or removing both inset Behaviors.
+        if [ "$negative" -eq 2 ]; then
+            for axis in X Y; do
+                [ "$(grep -cxF "            Behavior on inset$axis {" "$config/flea/DialogButton.qml")" -eq 1 ] || exit 1
+                sed -i "/^            Behavior on inset$axis {$/,/^            }$/d" "$config/flea/DialogButton.qml" || exit 1
+            done
+        else
+            [ "$(grep -cxF '    id: root' "$config/flea/DialogButton.qml")" -eq 1 ] || exit 1
+            sed -i '/^    id: root$/a\
+    scale: tap.pressed && root.available && !Theme.reducedMotion ? Buttons.PRESS_SCALE : 1\
+    Behavior on scale { NumberAnimation { duration: Buttons.PRESS_MS; easing.type: Easing.OutCubic } }
+' "$config/flea/DialogButton.qml" || exit 1
+        fi
+    else
+        ln -s "$PWD/ui" "$config/flea" || exit 1
+    fi
+    headless_commons "$test_root" "$config/Commons" || exit 1
     ln -s "$(readlink -f ui/boot/Ui)" "$config/Ui" || exit 1
     cp "tests/$qml" "$config/shell.qml" || exit 1
     cp tests/button-probe.js "$config/button-probe.js" || exit 1
@@ -109,6 +130,29 @@ for spec in $harnesses; do
     # Sample input: "  INFO qml: BUTTONSYS ok rest: ..." once per check, and "  INFO qml: BUTTONSYS DONE checks=101 failed=0" once.
     passed=$(printf '%s\n' "$output" | grep -c "$tag ok ")
     failed=$(printf '%s\n' "$output" | grep -c "$tag FAIL")
+    if [ "$negative" -eq 2 ]; then
+        if [ "$failed" -eq 4 ] \
+            && [ "$(printf '%s\n' "$output" | grep -c 'PRESS FAIL case [0-3] press inset transitions before settling')" -eq 4 ] \
+            && [ "$(printf '%s\n' "$output" | grep -c 'PRESS ok case [45] reduced motion snaps without inset transition')" -eq 2 ] \
+            && printf '%s\n' "$output" | grep -q "PRESS DONE checks=$expected_checks failed=4$"; then
+            printf 'button-system: no-Behavior mutant rejected by all four normal-motion cases; both reduced-motion cases snap (%s failed of %s)\n' "$failed" "$expected_checks"
+        else
+            fail 'button-press.qml: the no-Behavior mutant escaped its inset-transition gate'
+        fi
+        verdict_output="$verdict_output
+$output"
+        continue
+    elif [ "$negative" -eq 1 ]; then
+        if printf '%s\n' "$output" | grep -q 'PRESS FAIL .*held label never transforms' \
+            && printf '%s\n' "$output" | grep -q "PRESS DONE checks=$expected_checks failed=[1-9][0-9]*"; then
+            printf 'button-system: root-scale mutant rejected by mapped-label checks (%s failed of %s)\n' "$failed" "$expected_checks"
+        else
+            fail 'button-press.qml: the root-scale mutant escaped its mapped-label gate'
+        fi
+        verdict_output="$verdict_output
+$output"
+        continue
+    fi
     if [ "$failed" -ne 0 ]; then
         fail "$qml: the controls draw different ladders: $failed checks failed"
         printf '%s\n' "$output" | grep -a "$tag FAIL"

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # Drives the real backend against the media fixture and asserts the thumbnail contract end to end.
 set -u
 set -o pipefail
@@ -83,7 +84,7 @@ fi
 out=$(printf '{"c":"list","path":"%s","first":10}\n{"c":"thumb","rows":[0]}\n{"c":"list","path":"%s","first":10}\n{"c":"quit"}\n' "$D/gen" "$D/other" | timeout 120 $BIN --backend)
 check "a result for a superseded listing is dropped" "0" "$(echo "$out" | grep -c '"t":"thumbed"')"
 
-# The flood is larger than thumbs.rs's MAX_QUEUE of 70, so without the dedupe it evicts the victim row's queued job; see AGENTS.md "Thumbnail requests".
+# The FIFO queues the victim first; without dedupe the repeated row answers 75 times, caught by the second check, while the first guards against eviction; see AGENTS.md "Thumbnail requests".
 mkdir -p "$D/flood"
 for i in 0 1 2 3 4 5; do cp "$FIXTURE/clip_6.mp4" "$D/flood/v$i.mp4"; done
 flood='0,1,2,3,5'
@@ -372,7 +373,7 @@ chmod 700 "$prefetch_root/runtime" || { sandbox_remove "$D"; exit 1; }
 ln -s "$PWD/tests/thumbs-qlprefetch.qml" "$prefetch_root/config/shell.qml" || { sandbox_remove "$D"; exit 1; }
 # The probe plans with production Thumbs and ExtThumbs, so it reads ui/ as flea.
 ln -s "$PWD/ui" "$prefetch_root/config/flea" || { sandbox_remove "$D"; exit 1; }
-ln -s /usr/share/omarchy/shell/Commons "$prefetch_root/config/Commons" || { sandbox_remove "$D"; exit 1; }
+headless_commons "$prefetch_root" || { sandbox_remove "$D"; exit 1; }
 ln -s /usr/share/omarchy/shell/Ui "$prefetch_root/config/Ui" || { sandbox_remove "$D"; exit 1; }
 ( env -u DISPLAY -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \
     HOME="$D" XDG_RUNTIME_DIR="$prefetch_root/runtime" TMPDIR="$D" \

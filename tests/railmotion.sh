@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # The auto-hidden rail slides on x in the real window offscreen, once with motion and once with FLEA_REDUCED_MOTION=1.
 set -u
 cd "$(dirname "$0")/.." || exit 1
@@ -42,11 +43,12 @@ printf '{"blockdevices":[]}\n'
 SH
 chmod 700 "$probe/bin/lsblk" || exit 1
 ln -s "$PWD/ui" "$probe/config/flea"
-ln -s "$(readlink -f ui/boot/Commons)" "$probe/config/Commons"
+headless_commons "$probe" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$probe/config/Ui"
 ln -s "$PWD/ui/boot/fleatab.qml" "$probe/config/fleatab.qml"
 cp tests/railmotion.qml "$probe/config/shell.qml"
 cp tests/RailIpc.qml "$probe/config/RailIpc.qml"
+cp tests/RailDragHold.qml "$probe/config/RailDragHold.qml"
 # Every leg starts from this state: the motion leg ends in Dual and saves it, so the next leg is seeded again.
 seed_state() {
     env HOME="$probe/home" XDG_STATE_HOME="$probe/state" "$bin" --ui-state \

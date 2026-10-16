@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+. "$(dirname "$0")/headless-commons.sh"
 # Gate off-thread parsing and viewport delegates for a generated README of about 560 KiB.
 set -u
 . "$(dirname "$0")/../tools/flea-sandbox-guard"
@@ -68,7 +69,7 @@ trap cleanup EXIT
 mkdir -p "$test_root/config" "$test_root/home" "$test_root/state" "$test_root/cache" "$test_root/runtime" || exit 1
 chmod 700 "$test_root/runtime" || exit 1
 cp -a ui "$test_root/config/flea" || exit 1
-ln -s "$(readlink -f ui/boot/Commons)" "$test_root/config/Commons" || exit 1
+headless_commons "$test_root" || exit 1
 ln -s "$(readlink -f ui/boot/Ui)" "$test_root/config/Ui" || exit 1
 cp tests/markdown-lazy.qml "$test_root/config/shell.qml" || exit 1
 
@@ -78,6 +79,8 @@ for ((section = 0; section < fixture_sections; section++)); do
     printf '## Section %s\n\nParagraph %s carries enough words to wrap a couple of lines in the frame.\n\n- item %s alpha\n- item %s beta\n\n| Kind | Asks for |\n| :--- | :--- |\n| rows %s | the cursor |\n\n```js\nvar section%s = true;\n```\n\n' \
         "$section" "$section" "$section" "$section" "$section" "$section"
 done > "$test_root/notes.md" || exit 1
+# The final fence ends in exactly one newline; only the separators between sections keep their blank line.
+python3 -I -c 'import sys; p = sys.argv[1]; data = open(p, "rb").read(); assert data.endswith(b"\n\n"); open(p, "wb").write(data[:-1])' "$test_root/notes.md" || exit 1
 printf 'readme bytes: %s\n' "$(stat -c %s "$test_root/notes.md")"
 # Require more than half a MiB so the fixture exercises a substantial document.
 minimum_fixture_bytes=524288

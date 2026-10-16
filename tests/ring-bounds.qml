@@ -307,7 +307,8 @@ ShellRoot {
     function checkPins(key, dialog, unpinnedWhy) {
         var got = root.pinsOf(dialog)
         console.log("RINGBOUNDS POS " + key + " " + JSON.stringify(got))
-        var want = Pins.PINS[key]
+        var pinned = Pins.PINS[key]
+        var want = typeof pinned === "function" ? pinned(captionProbe.implicitHeight) : pinned
         if (unpinnedWhy !== undefined) {
             root.check(want === undefined, key + " is listed unpinned (" + unpinnedWhy + ") and also pinned")
             return
@@ -366,7 +367,7 @@ ShellRoot {
         root.check(Qt.colorEqual(frame.border.color, want === "accent" ? c.accent : c.foreground), tag + " focused button frames itself in " + frame.border.color + ", not the " + want)
         var width = want === "thick" ? root.thickWidth : root.hairline
         root.check(frame.border.width === width, tag + " focused button frame is " + frame.border.width + " px, not " + width)
-        root.check(frame.width === button.width && frame.height === button.height, tag + " focused button frame " + frame.width + "x" + frame.height + " is not the button's own " + button.width + "x" + button.height)
+        root.check(Pins.snappedFrame(frame, button), tag + " focused button frame " + root.rectText(frame) + " is not the button's snapped local rect")
         var box = frame.mapToItem(card, 0, 0, frame.width, frame.height)
         root.clear(tag + " frame in the viewport", box, card.width, card.height, 0)
     }
@@ -633,6 +634,13 @@ ShellRoot {
         implicitHeight: 650
         Flea.WindowBody { id: body; host: window }
         Item { anchors.fill: parent; TestEvent { id: driver } }
+        // An independent native caption line box, so save-field Y follows the same font on both Qt images without reading the field's own geometry.
+        Text {
+            id: captionProbe
+            visible: false
+            text: "Filename"
+            font { family: Flea.Theme.font.family; pixelSize: Flea.Theme.font.caption }
+        }
         // The save picker's answer area, which lives in its own window in the product, at the picker's 840 px.
         Flea.PickerSave { id: saveCard; picker: fakePicker; width: 840; z: 100 }
         // The transfer card, which the status bar hosts in the product, with the status bar's right margin.
