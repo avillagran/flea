@@ -2698,6 +2698,8 @@ record clears when the edit leaves that row or the tile is reused, so a pooled t
 
 ## File budget
 
+The text-selection review forwards unhandled Quick Look keys to the bound pane; `ui/Preview.qml` moves from 1010 to 1015 lines (`wc -l`). Selection readers now cap actual input at the storage limit plus one byte.
+
 Text selection adds one document-level pointer owner to `ui/PreviewMarkdown.qml`; its scoped ceiling moves from 668 to 683 lines (`wc -l`). Native selection documents are built only on contact, and block delegates retain their original rendering and object count.
 
 The RAW3 join onto the 0.3.11 stage records the merged `wc -l` ceilings at `src/backend/metareq.rs` 541, `src/backend/menu_actions.rs` 674, `tests/js/facts.js` 415 and `ui/js/Facts.js` 402. `ui/MenuActionDialog.qml` crosses the unchanged 400-line cap at 402 for the initial photo facts combined with the deferred file facts, each pair drawn once in the board's order; its scoped ceiling is the merged count. No code or comment was compressed to meet a cap.

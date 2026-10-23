@@ -1,7 +1,6 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import Quickshell.Io
 import "." as Flea
 
 // Plain text opens directly as a bounded selectable document; Markdown source
@@ -23,6 +22,9 @@ Item {
     property bool requested: false
     property bool copied: false
     property bool readReady: false
+    property int readBytes: 0
+    property int readTicket: 0
+    property var reader: null
     property string failure: ""
     property string loadedText: ""
     readonly property bool ready: root.available && (root.sourceText !== null || root.readReady) && root.failure === ""
@@ -34,6 +36,12 @@ Item {
     implicitHeight: Theme.chromeHeight
 
     function reset() {
+        root.readTicket++
+        if (root.reader !== null) {
+            root.reader.destroy()
+            root.reader = null
+        }
+        root.readBytes = 0
         copiedTimer.stop()
         root.selecting = false
         root.copyPending = false
@@ -51,9 +59,15 @@ Item {
         if (!root.available) root.reset()
         else if (root.directSelection) root.request()
     }
+    onMaxBytesChanged: {
+        root.reset()
+        if (root.available && root.directSelection) root.request()
+    }
     Component.onCompleted: if (root.available && root.directSelection) root.request()
 
     function request() {
+        if (!root.requested && root.sourceText === null)
+            root.reader = readerFactory.createObject(root, { path: root.path, maxBytes: root.maxBytes, ticket: root.readTicket })
         root.requested = true
         if (root.sourceText !== null) {
             var text = String(root.sourceText)
@@ -95,29 +109,23 @@ Item {
     }
     onReadyChanged: if (root.ready) Qt.callLater(root.finishCopy)
 
-    FileView {
-        id: file
-        path: root.available && root.sourceText === null && root.requested ? root.path : ""
-        blockLoading: false
-        blockAllReads: false
-        printErrors: false
-        onPathChanged: root.readReady = false
-        onLoaded: {
-            if (file.data().byteLength > root.maxBytes) root.failure = "This file is too large to preview."
-            else {
-                var text = file.text()
-                if (text.indexOf("\u0000") >= 0) root.failure = "This is a binary file."
-                else {
-                    root.loadedText = text
-                    root.readReady = true
-                }
-            }
-            if (root.failure !== "") root.copyPending = false
-            root.finishCopy()
+    function readLanded(ticket, text, bytes, ok) {
+        if (ticket !== root.readTicket || !root.available) return
+        root.readBytes = bytes
+        if (!ok) root.failure = "This file could not be read."
+        else if (bytes > root.maxBytes) root.failure = "This file is too large to preview."
+        else if (text.indexOf("\u0000") >= 0) root.failure = "This is a binary file."
+        else {
+            root.loadedText = text
+            root.readReady = true
         }
-        onLoadFailed: {
-            root.failure = "This file could not be read."
-            root.copyPending = false
+        if (root.failure !== "") root.copyPending = false
+        root.finishCopy()
+    }
+    Component {
+        id: readerFactory
+        Flea.BoundedPreviewRead {
+            onFinished: function(ticket, text, bytes, ok) { root.readLanded(ticket, text, bytes, ok) }
         }
     }
 

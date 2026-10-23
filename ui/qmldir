@@ -230,3 +230,4 @@ PreviewTextActions 1.0 PreviewTextActions.qml
 SelectablePreviewText 1.0 SelectablePreviewText.qml
 PreviewSelectionDocument 1.0 PreviewSelectionDocument.qml
 PreviewTextSelection 1.0 PreviewTextSelection.qml
+BoundedPreviewRead 1.0 BoundedPreviewRead.qml

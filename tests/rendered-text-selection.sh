@@ -21,6 +21,6 @@ env -u DISPLAY -u WAYLAND_DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE \
     QT_QUICK_BACKEND=software QT_FORCE_STDERR_LOGGING=1 \
     timeout 20 qs -p "$probe/config" > "$probe/log" 2>&1 || { cat "$probe/log"; exit 1; }
 cat "$probe/log"
-[ "$(grep -c 'RENDERSELECT PASS' "$probe/log")" -eq 12 ]
+[ "$(grep -c 'RENDERSELECT PASS' "$probe/log")" -eq 15 ]
 grep -q 'RENDERSELECT DONE failures=0' "$probe/log"
 ! grep -qE 'RENDERSELECT FAIL|TypeError|ReferenceError|WARN|ERROR' "$probe/log"

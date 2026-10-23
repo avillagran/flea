@@ -76,6 +76,11 @@ ShellRoot {
                 e.select(2, 22)
                 keys.keyClick(Qt.Key_C, Qt.ControlModifier, -1)
                 root.check("Ctrl+C copies only selected text", root.clipboardText() === root.sample.substring(2, 22))
+                e.cursorPosition = 0
+                keys.keyClick(Qt.Key_Right, Qt.ShiftModifier, -1)
+                root.check("Shift+Arrow selects a source-text range", e.selectedText === root.sample.charAt(0))
+                keys.keyClick(Qt.Key_C, Qt.ControlModifier, -1)
+                root.check("keyboard-selected range copies", root.clipboardText() === root.sample.charAt(0))
                 keys.keyClick(Qt.Key_A, Qt.ControlModifier, -1)
                 root.check("Ctrl+A selects the full document", e.selectedText === root.sample)
                 keys.keyClick(Qt.Key_X, Qt.NoModifier, -1)
@@ -111,6 +116,7 @@ ShellRoot {
                 break
             case 5:
                 root.check("grown file is refused by actual byte size", actions.failure === "This file is too large to preview." && !actions.copied)
+                root.check("read stops after the size gate plus one byte", actions.readBytes === actions.maxBytes + 1)
                 actions.available = false
                 actions.maxBytes = 1024
                 actions.sourceText = "abc\u0000def"
@@ -167,6 +173,22 @@ ShellRoot {
                 root.check("overflowing text drag selects instead of scrolling", longEdit.selectedText.length > 200 && actions.selectionItem.viewport.contentY === top)
                 keys.mouseWheel(actions.selectionItem, actions.selectionItem.width / 2, actions.selectionItem.height / 2, Qt.NoButton, Qt.NoModifier, 0, -120, -1)
                 root.check("wheel still scrolls selectable text", actions.selectionItem.viewport.contentY > top)
+                actions.available = false
+                actions.sourceText = null
+                actions.path = Quickshell.env("TEXT_ACTIONS_BIG")
+                actions.maxBytes = 256 * 1024
+                actions.available = true
+                actions.copyAll()
+                break
+            case 11:
+                root.check("remote gate bounds the actual read", actions.failure === "This file is too large to preview." && actions.readBytes === 256 * 1024 + 1 && !actions.copied)
+                actions.available = false
+                actions.maxBytes = 1048576
+                actions.available = true
+                actions.copyAll()
+                break
+            case 12:
+                root.check("local gate bounds the actual read", actions.failure === "This file is too large to preview." && actions.readBytes === 1048577 && !actions.copied)
                 console.log("TEXTACTIONS DONE failures=" + root.failures)
                 Qt.quit()
                 break

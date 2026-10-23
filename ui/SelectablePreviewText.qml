@@ -31,6 +31,7 @@ Rectangle {
             enabled: root.notice === ""
             readOnly: true
             selectByMouse: true
+            selectByKeyboard: true
             persistentSelection: true
             wrapMode: TextEdit.Wrap
             color: Theme.color.foreground

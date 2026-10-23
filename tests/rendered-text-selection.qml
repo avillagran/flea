@@ -40,6 +40,8 @@ ShellRoot {
             text: Array(100).fill("Line of plain text with <literal> & Unicode café.").join("\n")
             scrolls: true
         }
+        Text { id: lateHost; visible: false; text: "alpha"; textFormat: Text.PlainText }
+        Flea.PreviewSelectionDocument { id: lateEditor; visible: false; host: lateHost }
         TextEdit { id: receiver; visible: false; textFormat: TextEdit.PlainText }
         TestEvent { id: keys }
     }
@@ -53,11 +55,26 @@ ShellRoot {
                 if (!doc.contentReady) { root.stage--; break }
                 var texts = doc.renderedSelection.texts()
                 root.check("rendered selection keeps native documents lazy", texts.length > 2 && texts.every(function(t) { return t.selectionEditor === null }))
+                lateHost.text = '<font color="#112233">alpha<br>beta</font>'
                 root.textItem = texts[0]
                 var p = root.textItem.mapToItem(doc.renderedSelection, 8, root.textItem.topPadding + 8)
                 keys.mouseClick(doc.renderedSelection, p.x, p.y, Qt.LeftButton, Qt.NoModifier, -1)
                 break
             case 1:
+                lateHost.textFormat = Text.StyledText
+                break
+            case 2:
+                root.check("late format-only change refreshes copied text", lateEditor.getText(0, lateEditor.length) === "alpha\u2028beta")
+                lateHost.lineHeightMode = Text.FixedHeight
+                lateHost.lineHeight = 30
+                break
+            case 3:
+                var fixedStep = lateEditor.positionToRectangle(lateEditor.length - 1).y - lateEditor.positionToRectangle(0).y
+                root.check("line-height change refreshes selection layout", Math.abs(fixedStep - 30) <= 1, "step=" + fixedStep)
+                lateHost.lineHeightMode = Text.ProportionalHeight
+                break
+            case 4:
+                root.check("line-height mode change refreshes selection layout", lateEditor.positionToRectangle(lateEditor.length - 1).y - lateEditor.positionToRectangle(0).y > 30)
                 var t = root.textItem, edit = t.selectionEditor
                 root.check("press builds native rendered text", edit !== null && edit.getText(0, edit.length).indexOf("bold") >= 0)
                 root.check("selection baseline matches rendered ink", Math.abs(t.drawnBaseline - edit.baselineOffset) <= 1, "host=" + t.drawnBaseline + " editor=" + edit.baselineOffset)
@@ -83,7 +100,7 @@ ShellRoot {
                 code.active = true
                 code.visible = true
                 break
-            case 2:
+            case 5:
                 var route = null
                 for (var k = 0; k < code.children.length; k++)
                     if (code.children[k].texts !== undefined) route = code.children[k]
